@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import random
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -70,15 +71,131 @@ def _safe_filename(filename: str) -> str:
     return name or "document.txt"
 
 
+def _date_from_job_id(job_id: str) -> str | None:
+    match = re.match(r"^(\d{4})(\d{2})(\d{2})-", job_id)
+    if not match:
+        return None
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
+
 def build_storage_keys(job_id: str, filename: str, date: str | None = None) -> dict[str, str]:
-    day = date or datetime.now(UTC).strftime("%Y-%m-%d")
+    day = date or _date_from_job_id(job_id) or datetime.now(UTC).strftime("%Y-%m-%d")
     base = f"projects/presidio-ru-zed/work/{day}/jobs/{job_id}"
     safe_name = _safe_filename(filename)
     return {
         "raw": f"{base}/raw/{safe_name}",
         "anonymized": f"{base}/derived/anonymized.txt",
+        "final": f"{base}/derived/final.txt",
         "manifest": f"{base}/MANIFEST.json",
+        "state": f"{base}/state.json",
     }
+
+
+def create_job_id(now: datetime | None = None) -> str:
+    timestamp = now or datetime.now(UTC)
+    import uuid
+
+    return f"{timestamp.strftime('%Y%m%d')}-{uuid.uuid4().hex}"
+
+
+def _auto_claim_replacement(text: str, index: int) -> str:
+    rng = random.Random(f"{index}:{text}")
+
+    def replace_number(match: re.Match) -> str:
+        value = match.group(0)
+        suffix = "%" if value.endswith("%") else ""
+        if suffix:
+            return f"{rng.randint(11, 89)}%"
+        if len(re.sub(r"\D", "", value)) >= 4:
+            return str(rng.randint(2027, 2042))
+        return str(rng.randint(10, 99))
+
+    replaced = re.sub(r"\d+(?:[.,]\d+)?%?", replace_number, text)
+    if replaced != text:
+        return replaced
+    return f"Обобщенное утверждение {index + 1}"
+
+
+def extract_claims(text: str, limit: int = 80) -> list[dict]:
+    signals = re.compile(
+        r"(\d|%|revenue|grew|scored|score|confirmed|confirms|remained|"
+        r"состав|рост|сниз|увелич|подтверж|показател|утверж|доля|выруч|прибыл)",
+        re.IGNORECASE,
+    )
+    claims: list[dict] = []
+    seen: set[str] = set()
+    pattern = re.compile(r"[^\n.!?]+(?:[.!?]+|$)")
+    for match in pattern.finditer(text):
+        candidate = match.group(0).strip()
+        if len(candidate) < 18:
+            continue
+        if not signals.search(candidate) and len(candidate.split()) < 4:
+            continue
+        if not signals.search(candidate) and not re.search(r"\b(is|are|was|were|будет|является|имеет)\b", candidate, re.I):
+            continue
+        normalized = re.sub(r"\s+", " ", candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        start = match.start() + len(match.group(0)) - len(match.group(0).lstrip())
+        end = start + len(candidate)
+        claim_index = len(claims)
+        claims.append(
+            {
+                "id": f"fact-{claim_index + 1}",
+                "start": start,
+                "end": end,
+                "text": candidate,
+                "suggestion": _auto_claim_replacement(candidate, claim_index),
+                "replacement": "",
+                "applied": False,
+            }
+        )
+        if len(claims) >= limit:
+            break
+    return claims
+
+
+def _overlaps(left: tuple[int, int], right: tuple[int, int]) -> bool:
+    return left[0] < right[1] and right[0] < left[1]
+
+
+def apply_fact_replacements(raw_text: str, pii_replacements: list[dict], claims: list[dict]) -> str:
+    fact_ops: list[tuple[int, int, str, str]] = []
+    for claim in claims:
+        replacement = str(claim.get("replacement") or "").strip()
+        if not replacement:
+            continue
+        start = int(claim["start"])
+        end = int(claim["end"])
+        if 0 <= start < end <= len(raw_text):
+            fact_ops.append((start, end, replacement, "fact"))
+
+    fact_ranges = [(start, end) for start, end, _, _ in fact_ops]
+    pii_ops: list[tuple[int, int, str, str]] = []
+    for item in pii_replacements:
+        start = int(item["start"])
+        end = int(item["end"])
+        if any(_overlaps((start, end), fact_range) for fact_range in fact_ranges):
+            continue
+        replacement = str(item.get("replacement") or f"<{item['entity_type']}>")
+        pii_ops.append((start, end, replacement, "pii"))
+
+    operations = sorted(fact_ops + pii_ops, key=lambda op: (op[0], 0 if op[3] == "fact" else 1, -(op[1] - op[0])))
+    accepted: list[tuple[int, int, str, str]] = []
+    for operation in operations:
+        if accepted and operation[0] < accepted[-1][1]:
+            continue
+        accepted.append(operation)
+
+    cursor = 0
+    parts: list[str] = []
+    for start, end, replacement, _ in accepted:
+        parts.append(raw_text[cursor:start])
+        parts.append(replacement)
+        cursor = end
+    parts.append(raw_text[cursor:])
+    return "".join(parts)
 
 
 class S3Storage:
@@ -106,6 +223,10 @@ class S3Storage:
         )
         return {"bucket": self.bucket, "key": key}
 
+    def get_text(self, key: str) -> str:
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        return response["Body"].read().decode("utf-8")
+
 
 class LocalStorage:
     def __init__(self):
@@ -114,6 +235,9 @@ class LocalStorage:
     def put_text(self, key: str, value: str, content_type: str = "text/plain; charset=utf-8") -> dict:
         self.objects[key] = {"value": value, "content_type": content_type}
         return {"bucket": "local-dev", "key": key}
+
+    def get_text(self, key: str) -> str:
+        return self.objects[key]["value"]
 
 
 class PresidioClient:
@@ -196,6 +320,7 @@ class DocumentProcessor:
         anonymized_text, anonymizer_items = self.presidio.anonymize(text, analyzer_results)
         anonymized_artifact = self.storage.put_text(keys["anonymized"], anonymized_text)
         replacements = self._build_replacements(text, analyzer_results, anonymizer_items)
+        claims = extract_claims(text)
 
         manifest = {
             "job_id": job_id,
@@ -206,6 +331,7 @@ class DocumentProcessor:
                 "characters": len(text),
                 "entities": len(analyzer_results),
                 "replacements": len(replacements),
+                "claims": len(claims),
                 "chunks": max(1, (len(text) + self.chunk_size - 1) // self.chunk_size),
             },
             "artifacts": {
@@ -231,6 +357,7 @@ class DocumentProcessor:
             "preview_chars": self.preview_chars,
             "analyzer_results": [item.to_api() for item in analyzer_results],
             "replacements": replacements,
+            "claims": claims,
             "stats": manifest["stats"],
             "artifacts": {
                 "raw": raw_artifact,
@@ -253,6 +380,8 @@ class DocumentProcessor:
                     "end": result.end,
                     "original": text[result.start : result.end],
                     "replacement": replacement or f"<{result.entity_type}>",
+                    "replacement_start": anonymizer_items[index].get("start") if index < len(anonymizer_items) else None,
+                    "replacement_end": anonymizer_items[index].get("end") if index < len(anonymizer_items) else None,
                 }
             )
         return replacements

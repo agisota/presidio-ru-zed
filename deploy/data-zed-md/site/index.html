@@ -46,6 +46,15 @@
       background: var(--surface);
       color: var(--accent-strong);
     }
+    button.icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      font-size: 18px;
+      line-height: 1;
+    }
     button:disabled {
       opacity: 0.55;
       cursor: not-allowed;
@@ -216,12 +225,21 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
+      scroll-behavior: smooth;
     }
     .pii {
       background: var(--pii);
       border-bottom: 2px solid var(--pii-border);
       border-radius: 4px;
       padding: 1px 2px;
+    }
+    .result-pii {
+      background: #dff7ef;
+      border-bottom-color: var(--accent);
+    }
+    .active-hit {
+      outline: 3px solid rgba(15, 118, 110, 0.28);
+      background: #b9eee5;
     }
     .empty {
       color: var(--muted);
@@ -252,6 +270,8 @@
       letter-spacing: 0;
     }
     tr:last-child td { border-bottom: 0; }
+    tr.clickable { cursor: pointer; }
+    tr.active-row td { background: #f0fbf8; }
     code {
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
       background: var(--surface-soft);
@@ -272,6 +292,31 @@
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .finding-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .claim-input {
+      width: 100%;
+      min-height: 58px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      color: var(--text);
+      background: #fbfcfd;
+    }
+    .claim-suggestion {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .claim-fragment {
+      min-width: 260px;
+      max-width: 520px;
     }
     @media (max-width: 980px) {
       header, .workspace, .preview-grid {
@@ -328,7 +373,14 @@
           <article class="panel">
             <div class="panel-header">
               <h2>Оригинал с подсветкой</h2>
-              <span class="badge" id="findingCount">0 находок</span>
+              <div class="actions">
+                <div class="finding-nav" aria-label="Навигация по заменам">
+                  <button id="prevFindingBtn" class="secondary icon" type="button" title="Предыдущая замена" disabled>‹</button>
+                  <span class="badge" id="findingPosition">0/0</span>
+                  <button id="nextFindingBtn" class="secondary icon" type="button" title="Следующая замена" disabled>›</button>
+                </div>
+                <span class="badge" id="findingCount">0 находок</span>
+              </div>
             </div>
             <div class="panel-body">
               <div id="highlighted" class="document empty">Результаты появятся после анализа.</div>
@@ -373,6 +425,34 @@
             </div>
           </div>
         </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Факты и утверждения</h2>
+            <div class="actions">
+              <button id="autoFactsBtn" class="secondary" type="button" disabled>Заменить факты и утверждения</button>
+              <button id="saveFactsBtn" class="secondary" type="button" disabled>Сохранить мои замены</button>
+              <span class="badge" id="claimCount">0 фактов</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Фрагмент</th>
+                    <th>Автозамена</th>
+                    <th>Моя замена</th>
+                    <th>Диапазон</th>
+                  </tr>
+                </thead>
+                <tbody id="claimRows">
+                  <tr><td colspan="4" class="empty">Факты и утверждения появятся после анализа.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </article>
       </section>
     </section>
   </main>
@@ -390,19 +470,31 @@
     const anonymized = document.getElementById("anonymized");
     const replacementRows = document.getElementById("replacementRows");
     const findingCount = document.getElementById("findingCount");
+    const findingPosition = document.getElementById("findingPosition");
     const replacementCount = document.getElementById("replacementCount");
+    const claimRows = document.getElementById("claimRows");
+    const claimCount = document.getElementById("claimCount");
     const charCount = document.getElementById("charCount");
     const fileMeta = document.getElementById("fileMeta");
     const artifactMeta = document.getElementById("artifactMeta");
     const progressBar = document.getElementById("progressBar");
     const copyBtn = document.getElementById("copyBtn");
     const downloadBtn = document.getElementById("downloadBtn");
+    const prevFindingBtn = document.getElementById("prevFindingBtn");
+    const nextFindingBtn = document.getElementById("nextFindingBtn");
+    const autoFactsBtn = document.getElementById("autoFactsBtn");
+    const saveFactsBtn = document.getElementById("saveFactsBtn");
     const healthDot = document.getElementById("healthDot");
     const healthText = document.getElementById("healthText");
 
     let currentAnonymizedText = "";
     let currentJobId = "";
+    let currentFindings = [];
+    let currentClaims = [];
+    let currentSourceLength = 0;
+    let activeFindingIndex = -1;
     let selectedFile = null;
+    let syncingScroll = false;
 
     function escapeHtml(value) {
       return value.replace(/[&<>"']/g, (char) => ({
@@ -462,12 +554,73 @@
         const safeEnd = Math.min(item.end, text.length);
         parts.push(escapeHtml(text.slice(cursor, item.start)));
         const fragment = escapeHtml(text.slice(item.start, safeEnd));
-        parts.push(`<mark class="pii" title="${escapeHtml(item.entity_type)} score ${Number(item.score).toFixed(2)}">${fragment}</mark>`);
+        parts.push(`<mark class="pii" data-finding-index="${item.findingIndex}" title="${escapeHtml(item.entity_type)} score ${Number(item.score || 0).toFixed(2)}">${fragment}</mark>`);
         cursor = safeEnd;
       }
       parts.push(escapeHtml(text.slice(cursor)));
       highlighted.className = "document";
       highlighted.innerHTML = parts.join("");
+    }
+
+    function renderAnonymizedHighlights(text, replacements) {
+      if (!text) {
+        anonymized.className = "document empty";
+        anonymized.textContent = "Здесь будет текст после замен.";
+        return;
+      }
+      const segments = replacements
+        .filter((item) => Number.isInteger(item.replacement_start) && Number.isInteger(item.replacement_end))
+        .filter((item) => item.replacement_start >= 0 && item.replacement_end <= text.length && item.replacement_end > item.replacement_start)
+        .sort((a, b) => a.replacement_start - b.replacement_start);
+      if (!segments.length) {
+        anonymized.className = "document";
+        anonymized.textContent = text;
+        return;
+      }
+      let cursor = 0;
+      const parts = [];
+      for (const item of segments) {
+        if (item.replacement_start < cursor) continue;
+        parts.push(escapeHtml(text.slice(cursor, item.replacement_start)));
+        const fragment = escapeHtml(text.slice(item.replacement_start, item.replacement_end));
+        parts.push(`<mark class="pii result-pii" data-finding-index="${item.findingIndex}" title="Замена ${escapeHtml(item.entity_type)}">${fragment}</mark>`);
+        cursor = item.replacement_end;
+      }
+      parts.push(escapeHtml(text.slice(cursor)));
+      anonymized.className = "document";
+      anonymized.innerHTML = parts.join("");
+    }
+
+    function updateFindingNav() {
+      const total = currentFindings.length;
+      findingPosition.textContent = total ? `${activeFindingIndex + 1}/${total}` : "0/0";
+      prevFindingBtn.disabled = total === 0;
+      nextFindingBtn.disabled = total === 0;
+    }
+
+    function setActiveFinding(index, shouldScroll = true) {
+      if (!currentFindings.length) {
+        activeFindingIndex = -1;
+        updateFindingNav();
+        return;
+      }
+      activeFindingIndex = (index + currentFindings.length) % currentFindings.length;
+      highlighted.querySelectorAll(".active-hit").forEach((node) => node.classList.remove("active-hit"));
+      anonymized.querySelectorAll(".active-hit").forEach((node) => node.classList.remove("active-hit"));
+      replacementRows.querySelectorAll(".active-row").forEach((node) => node.classList.remove("active-row"));
+      const selector = `[data-finding-index="${activeFindingIndex}"]`;
+      const originalHit = highlighted.querySelector(selector);
+      const resultHit = anonymized.querySelector(selector);
+      const row = replacementRows.querySelector(selector);
+      originalHit?.classList.add("active-hit");
+      resultHit?.classList.add("active-hit");
+      row?.classList.add("active-row");
+      updateFindingNav();
+      if (shouldScroll) {
+        originalHit?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+        resultHit?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+        row?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+      }
     }
 
     function renderReplacements(replacements) {
@@ -476,7 +629,7 @@
         return;
       }
       replacementRows.innerHTML = replacements.map((item) => {
-        return `<tr>
+        return `<tr class="clickable" data-finding-index="${item.findingIndex}">
           <td><code>${escapeHtml(item.entity_type)}</code></td>
           <td>${Number(item.score || 0).toFixed(2)}</td>
           <td>${escapeHtml(item.original || "")}</td>
@@ -484,6 +637,38 @@
           <td>${item.start}-${item.end}</td>
         </tr>`;
       }).join("");
+      replacementRows.querySelectorAll("[data-finding-index]").forEach((row) => {
+        row.addEventListener("click", () => setActiveFinding(Number(row.dataset.findingIndex)));
+      });
+    }
+
+    function renderClaims(claims) {
+      currentClaims = claims || [];
+      claimCount.textContent = `${currentClaims.length} фактов`;
+      autoFactsBtn.disabled = !currentJobId || currentClaims.length === 0;
+      saveFactsBtn.disabled = !currentJobId || currentClaims.length === 0;
+      if (!currentClaims.length) {
+        claimRows.innerHTML = '<tr><td colspan="4" class="empty">Факты и утверждения не обнаружены.</td></tr>';
+        return;
+      }
+      claimRows.innerHTML = currentClaims.map((item) => {
+        const replacement = item.replacement || "";
+        return `<tr class="clickable" data-claim-start="${item.start || 0}">
+          <td class="claim-fragment">${escapeHtml(item.text || "")}</td>
+          <td><span class="claim-suggestion">${escapeHtml(item.suggestion || "")}</span></td>
+          <td>
+            <textarea class="claim-input" data-claim-id="${escapeHtml(item.id)}" data-suggestion="${escapeHtml(item.suggestion || "")}" spellcheck="false" placeholder="Оставьте пустым, чтобы не менять">${escapeHtml(replacement)}</textarea>
+          </td>
+          <td>${item.start}-${item.end}</td>
+        </tr>`;
+      }).join("");
+      claimRows.querySelectorAll("[data-claim-start]").forEach((row) => {
+        row.addEventListener("click", (event) => {
+          if (event.target.closest("textarea")) return;
+          const ratio = Number(row.dataset.claimStart || 0) / Math.max(1, currentSourceLength);
+          highlighted.scrollTop = ratio * Math.max(0, highlighted.scrollHeight - highlighted.clientHeight);
+        });
+      });
     }
 
     async function fetchJson(url, options = {}) {
@@ -493,6 +678,43 @@
         throw new Error(`${response.status} ${response.statusText}: ${body.slice(0, 240)}`);
       }
       return response.json();
+    }
+
+    async function saveFactReplacements() {
+      if (!currentJobId) return;
+      const replacements = [...claimRows.querySelectorAll(".claim-input")]
+        .map((input) => ({
+          id: input.dataset.claimId,
+          replacement: input.value.trim()
+        }))
+        .filter((item) => item.id && item.replacement);
+      if (!replacements.length) {
+        setStatus("Заполните хотя бы одну замену для факта или утверждения.", "error");
+        return;
+      }
+      autoFactsBtn.disabled = true;
+      saveFactsBtn.disabled = true;
+      setStatus("Сохранение замен фактов и утверждений...");
+      try {
+        const job = await fetchJson(`/processor/jobs/${encodeURIComponent(currentJobId)}/facts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ replacements })
+        });
+        renderJob(job);
+        setStatus("Финальный текст сохранен в S3 и готов к скачиванию.", "ok");
+      } catch (error) {
+        setStatus(`Ошибка сохранения фактов: ${error.message}`, "error");
+        autoFactsBtn.disabled = currentClaims.length === 0;
+        saveFactsBtn.disabled = currentClaims.length === 0;
+      }
+    }
+
+    async function autoReplaceFacts() {
+      claimRows.querySelectorAll(".claim-input").forEach((input) => {
+        input.value = input.dataset.suggestion || input.value;
+      });
+      await saveFactReplacements();
     }
 
     async function submitJob() {
@@ -524,14 +746,21 @@
 
     function renderJob(job) {
       currentJobId = job.job_id;
-      currentAnonymizedText = job.anonymized_text || "";
-      const analyzerResults = normalizeResults(job.analyzer_results || [], (job.source_text || "").length);
-      renderHighlights(job.source_text || "", analyzerResults);
-      findingCount.textContent = `${job.stats?.entities || analyzerResults.length} находок`;
-      anonymized.className = "document";
-      anonymized.textContent = currentAnonymizedText || "Processor вернул пустой результат.";
-      renderReplacements(job.replacements || []);
-      replacementCount.textContent = `${job.stats?.replacements || 0} замен`;
+      currentSourceLength = (job.source_text || "").length;
+      currentAnonymizedText = job.final_text || job.anonymized_text || "";
+      currentFindings = normalizeResults(job.replacements || job.analyzer_results || [], currentSourceLength)
+        .map((item, index) => ({ ...item, findingIndex: index }));
+      renderHighlights(job.source_text || "", currentFindings);
+      findingCount.textContent = `${job.stats?.entities || currentFindings.length} находок`;
+      if (job.final_text) {
+        anonymized.className = "document";
+        anonymized.textContent = currentAnonymizedText || "Processor вернул пустой результат.";
+      } else {
+        renderAnonymizedHighlights(currentAnonymizedText, currentFindings);
+      }
+      renderReplacements(currentFindings);
+      replacementCount.textContent = `${job.stats?.replacements || currentFindings.length} замен`;
+      renderClaims(job.claims || []);
       const manifestKey = job.artifacts?.manifest?.key || "";
       artifactMeta.textContent = manifestKey
         ? `S3 manifest: s3://${job.artifacts.manifest.bucket}/${manifestKey}`
@@ -543,6 +772,8 @@
       }
       copyBtn.disabled = !currentAnonymizedText;
       downloadBtn.disabled = !currentJobId;
+      activeFindingIndex = currentFindings.length ? 0 : -1;
+      setActiveFinding(activeFindingIndex, false);
     }
 
     async function analyzeDocument() {
@@ -572,6 +803,10 @@
       sourceText.value = "";
       currentAnonymizedText = "";
       currentJobId = "";
+      currentFindings = [];
+      currentClaims = [];
+      currentSourceLength = 0;
+      activeFindingIndex = -1;
       selectedFile = null;
       fileInput.value = "";
       fileMeta.textContent = "Файл не выбран";
@@ -581,10 +816,17 @@
       anonymized.className = "document empty";
       anonymized.textContent = "Здесь будет текст после замен.";
       replacementRows.innerHTML = '<tr><td colspan="5" class="empty">Пока замен нет.</td></tr>';
+      claimRows.innerHTML = '<tr><td colspan="4" class="empty">Факты и утверждения появятся после анализа.</td></tr>';
       findingCount.textContent = "0 находок";
+      findingPosition.textContent = "0/0";
       replacementCount.textContent = "0 замен";
+      claimCount.textContent = "0 фактов";
       copyBtn.disabled = true;
       downloadBtn.disabled = true;
+      prevFindingBtn.disabled = true;
+      nextFindingBtn.disabled = true;
+      autoFactsBtn.disabled = true;
+      saveFactsBtn.disabled = true;
       setProgress(0);
       setStatus("");
       updateCounts();
@@ -629,6 +871,10 @@
     });
     analyzeBtn.addEventListener("click", analyzeDocument);
     clearBtn.addEventListener("click", resetUi);
+    prevFindingBtn.addEventListener("click", () => setActiveFinding(activeFindingIndex - 1));
+    nextFindingBtn.addEventListener("click", () => setActiveFinding(activeFindingIndex + 1));
+    autoFactsBtn.addEventListener("click", autoReplaceFacts);
+    saveFactsBtn.addEventListener("click", saveFactReplacements);
     copyBtn.addEventListener("click", async () => {
       await navigator.clipboard.writeText(currentAnonymizedText);
       setStatus("Preview обезличенного текста скопирован.", "ok");
@@ -650,6 +896,20 @@
       });
     });
     dropzone.addEventListener("drop", (event) => loadFile(event.dataTransfer.files[0]));
+
+    function syncDocumentScroll(from, to) {
+      if (syncingScroll) return;
+      syncingScroll = true;
+      const fromMax = Math.max(1, from.scrollHeight - from.clientHeight);
+      const toMax = Math.max(0, to.scrollHeight - to.clientHeight);
+      to.scrollTop = (from.scrollTop / fromMax) * toMax;
+      requestAnimationFrame(() => {
+        syncingScroll = false;
+      });
+    }
+
+    highlighted.addEventListener("scroll", () => syncDocumentScroll(highlighted, anonymized));
+    anonymized.addEventListener("scroll", () => syncDocumentScroll(anonymized, highlighted));
 
     updateCounts();
     checkHealth();

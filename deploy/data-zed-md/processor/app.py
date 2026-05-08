@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import os
 import threading
-import uuid
 from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
-from document_processor import DocumentProcessor, PresidioClient, S3Storage, extract_text
+from document_processor import (
+    DocumentProcessor,
+    PresidioClient,
+    S3Storage,
+    apply_fact_replacements,
+    build_storage_keys,
+    create_job_id,
+    extract_text,
+)
 
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(64 * 1024 * 1024)))
@@ -18,6 +26,15 @@ PREVIEW_CHARS = int(os.environ.get("PROCESSOR_PREVIEW_CHARS", "300000"))
 app = FastAPI(title="data.zed.md document processor", version="1.0.0")
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
+
+
+class FactReplacement(BaseModel):
+    id: str
+    replacement: str
+
+
+class FactReplacementRequest(BaseModel):
+    replacements: list[FactReplacement]
 
 
 def _storage():
@@ -37,11 +54,57 @@ def _processor() -> DocumentProcessor:
     )
 
 
+def _public_job(job: dict) -> dict:
+    return {key: value for key, value in job.items() if not key.startswith("_")}
+
+
+def _state_key(job_id: str, filename: str = "state.json") -> str:
+    return build_storage_keys(job_id, filename)["state"]
+
+
+def _persist_job_state(job_id: str, job: dict) -> dict | None:
+    try:
+        storage = _storage()
+        public = _public_job(job)
+        key = _state_key(job_id, public.get("filename", "state.json"))
+        public.setdefault("artifacts", {})
+        state_artifact = {"bucket": getattr(storage, "bucket", "agent-artifacts"), "key": key}
+        public["artifacts"]["state"] = state_artifact
+        storage.put_text(key, public_json(public), "application/json; charset=utf-8")
+        return state_artifact
+    except Exception:
+        # A transient state write must not break the running anonymization job.
+        return None
+
+
+def public_json(payload: dict) -> str:
+    import json
+
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _load_job_state(job_id: str) -> dict | None:
+    try:
+        import json
+
+        storage = _storage()
+        payload = storage.get_text(_state_key(job_id))
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
 def _set_job(job_id: str, patch: dict) -> None:
     with jobs_lock:
         current = jobs.get(job_id, {})
         current.update(patch)
+        current["updated_at"] = datetime.now(UTC).isoformat()
         jobs[job_id] = current
+        public = _public_job(current)
+    state_artifact = _persist_job_state(job_id, public)
+    if state_artifact:
+        with jobs_lock:
+            jobs[job_id].setdefault("artifacts", {})["state"] = state_artifact
 
 
 def _run_job(job_id: str, filename: str, content: bytes, content_type: str | None, language: str) -> None:
@@ -101,7 +164,7 @@ async def create_job(
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"Документ больше лимита {MAX_UPLOAD_BYTES} bytes.")
 
-    job_id = uuid.uuid4().hex
+    job_id = create_job_id()
     _set_job(
         job_id,
         {
@@ -121,15 +184,66 @@ async def create_job(
 def get_job(job_id: str) -> dict:
     job = jobs.get(job_id)
     if not job:
+        job = _load_job_state(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {key: value for key, value in job.items() if not key.startswith("_")}
+    return _public_job(job)
 
 
-@app.get("/jobs/{job_id}/download", response_class=PlainTextResponse)
-def download_job(job_id: str) -> str:
-    job = jobs.get(job_id)
+@app.post("/jobs/{job_id}/facts")
+def replace_facts(job_id: str, request: FactReplacementRequest) -> dict:
+    job = jobs.get(job_id) or _load_job_state(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.get("status") != "complete":
         raise HTTPException(status_code=409, detail="Job is not complete")
-    return job.get("_full_anonymized_text") or job.get("anonymized_text", "")
+    raw_key = job.get("artifacts", {}).get("raw", {}).get("key")
+    if not raw_key:
+        raise HTTPException(status_code=409, detail="Raw artifact is missing")
+
+    storage = _storage()
+    raw_text = storage.get_text(raw_key)
+    replacement_map = {item.id: item.replacement for item in request.replacements}
+    claims = []
+    for claim in job.get("claims", []):
+        updated = dict(claim)
+        if updated["id"] in replacement_map:
+            updated["replacement"] = replacement_map[updated["id"]]
+            updated["applied"] = bool(replacement_map[updated["id"]].strip())
+        claims.append(updated)
+
+    final_text = apply_fact_replacements(raw_text, job.get("replacements", []), claims)
+    keys = build_storage_keys(job_id, job.get("filename", "document.txt"))
+    final_artifact = storage.put_text(keys["final"], final_text)
+    job.update(
+        {
+            "claims": claims,
+            "final_text": final_text[:PREVIEW_CHARS],
+            "truncated": len(final_text) > PREVIEW_CHARS,
+            "_full_final_text": final_text,
+        }
+    )
+    job.setdefault("artifacts", {})["final"] = final_artifact
+    _set_job(job_id, job)
+    return _public_job(jobs.get(job_id, job))
+
+
+@app.get("/jobs/{job_id}/download", response_class=PlainTextResponse)
+def download_job(job_id: str) -> str:
+    job = jobs.get(job_id) or _load_job_state(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") != "complete":
+        raise HTTPException(status_code=409, detail="Job is not complete")
+    if job.get("_full_final_text"):
+        return job["_full_final_text"]
+    if job.get("_full_anonymized_text"):
+        return job["_full_anonymized_text"]
+    storage = _storage()
+    final_key = job.get("artifacts", {}).get("final", {}).get("key")
+    if final_key:
+        return storage.get_text(final_key)
+    anonymized_key = job.get("artifacts", {}).get("anonymized", {}).get("key")
+    if anonymized_key:
+        return storage.get_text(anonymized_key)
+    return job.get("final_text") or job.get("anonymized_text", "")
