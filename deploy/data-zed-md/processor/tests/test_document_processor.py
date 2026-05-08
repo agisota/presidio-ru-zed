@@ -118,13 +118,18 @@ def test_s3_storage_uses_path_style_and_short_timeouts(monkeypatch):
     import boto3
 
     monkeypatch.setattr(boto3, "client", fake_client)
-    monkeypatch.setenv("BIT_S3_BUCKET", "agent-artifacts")
+    monkeypatch.delenv("BIT_S3_BUCKET", raising=False)
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
     monkeypatch.setenv("BIT_S3_ENDPOINT", "https://bit.blenny-gar.ts.net")
 
-    S3Storage()
+    storage = S3Storage()
 
     assert captured["service"] == "s3"
+    assert storage.bucket == "agent-artifacts"
     assert captured["endpoint_url"] == "https://bit.blenny-gar.ts.net"
+    assert captured["aws_access_key_id"] == "data-zed-local"
+    assert captured["aws_secret_access_key"] == "data-zed-local-password"
     assert captured["config"].s3["addressing_style"] == "path"
     assert captured["config"].connect_timeout == 3
     assert captured["config"].read_timeout == 30

@@ -208,7 +208,7 @@ class S3Storage:
         import boto3
         from botocore.config import Config
 
-        self.bucket = bucket or os.environ["BIT_S3_BUCKET"]
+        self.bucket = bucket or os.environ.get("BIT_S3_BUCKET", "agent-artifacts")
         config = Config(
             connect_timeout=float(os.environ.get("S3_CONNECT_TIMEOUT", "3")),
             read_timeout=float(os.environ.get("S3_READ_TIMEOUT", "30")),
@@ -219,6 +219,8 @@ class S3Storage:
             "s3",
             endpoint_url=endpoint_url or os.environ.get("BIT_S3_ENDPOINT") or os.environ.get("AWS_ENDPOINT_URL_S3"),
             region_name=region_name or os.environ.get("BIT_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1"),
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "data-zed-local"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "data-zed-local-password"),
             config=config,
         )
 
