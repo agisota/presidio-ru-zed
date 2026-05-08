@@ -16,9 +16,9 @@ services:
   analyzer:
     build:
       context: ../../presidio-analyzer
-      dockerfile: Dockerfile.stanza
+      dockerfile: Dockerfile
       args:
-        NLP_CONF_FILE: presidio_analyzer/conf/stanza_ru.yaml
+        NLP_CONF_FILE: presidio_analyzer/conf/slim_ru.yaml
         ANALYZER_CONF_FILE: presidio_analyzer/conf/analyzer_ru.yaml
         RECOGNIZER_REGISTRY_CONF_FILE: presidio_analyzer/conf/recognizers_ru.yaml
     restart: unless-stopped
@@ -28,7 +28,7 @@ services:
       LOG_LEVEL: "INFO"
     volumes:
       - ../../presidio-analyzer/presidio_analyzer/conf/analyzer_ru.yaml:/app/presidio_analyzer/conf/analyzer_ru.yaml:ro
-      - ../../presidio-analyzer/presidio_analyzer/conf/stanza_ru.yaml:/app/presidio_analyzer/conf/stanza_ru.yaml:ro
+      - ../../presidio-analyzer/presidio_analyzer/conf/slim_ru.yaml:/app/presidio_analyzer/conf/slim_ru.yaml:ro
       - ../../presidio-analyzer/presidio_analyzer/conf/recognizers_ru.yaml:/app/presidio_analyzer/conf/recognizers_ru.yaml:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]

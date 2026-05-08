@@ -1,0 +1,6 @@
+nlp_engine_name: slim
+models:
+  - lang_code: en
+    model_name: en_core_web_sm
+  - lang_code: ru
+    model_name: ru_core_news_sm
