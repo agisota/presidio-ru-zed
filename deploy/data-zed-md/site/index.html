@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>data.zed.md - Presidio RU</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f4;
+      --text: #1f2933;
+      --muted: #52606d;
+      --line: #d9e2ec;
+      --accent: #0f766e;
+      --panel: #ffffff;
+      --code: #111827;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 40px 0 56px;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 24px;
+      margin-bottom: 28px;
+    }
+    h1, h2, h3 { line-height: 1.15; margin: 0; }
+    h1 { font-size: clamp(32px, 5vw, 56px); letter-spacing: 0; }
+    h2 { font-size: 24px; margin-top: 28px; }
+    h3 { font-size: 17px; margin-top: 18px; }
+    p { color: var(--muted); max-width: 820px; }
+    a { color: var(--accent); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin: 20px 0;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+    }
+    pre {
+      overflow: auto;
+      background: var(--code);
+      color: #f8fafc;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .endpoint {
+      display: inline-block;
+      font-weight: 700;
+      color: var(--text);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1419;
+        --text: #e5e7eb;
+        --muted: #a7b0bb;
+        --line: #2f3a45;
+        --accent: #2dd4bf;
+        --panel: #151c24;
+        --code: #05070a;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Presidio RU</h1>
+      <p>Сервис для обнаружения и обезличивания персональных данных в русскоязычных и англоязычных текстах. Основан на Microsoft Presidio и развернут как API-поверхность data.zed.md.</p>
+    </header>
+
+    <section class="grid" aria-label="Сервисы">
+      <article class="card">
+        <h2>Analyzer</h2>
+        <p><span class="endpoint">/analyzer/analyze</span> находит сущности ПДн: ФИО, email, телефон, банковские карты, ИНН, СНИЛС, паспорт РФ и другие шаблоны.</p>
+      </article>
+      <article class="card">
+        <h2>Anonymizer</h2>
+        <p><span class="endpoint">/anonymizer/anonymize</span> заменяет найденные фрагменты масками, хешами или пользовательскими операторами Presidio.</p>
+      </article>
+      <article class="card">
+        <h2>Health</h2>
+        <p><span class="endpoint">/health</span>, <span class="endpoint">/analyzer/health</span> и <span class="endpoint">/anonymizer/health</span> используются для проверки живости сервиса.</p>
+      </article>
+    </section>
+
+    <h2>Пример анализа</h2>
+    <pre><code>curl -fsS https://data.zed.md/analyzer/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Иван Петров, паспорт 4510 123456, ИНН 7707083893, телефон +7 916 123-45-67, email ivan@example.ru","language":"ru"}'</code></pre>
+
+    <h2>Пример обезличивания</h2>
+    <pre><code>curl -fsS https://data.zed.md/anonymizer/anonymize \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Иван Петров, телефон +7 916 123-45-67","analyzer_results":[{"start":21,"end":37,"entity_type":"RU_PHONE_NUMBER","score":1.0}]}'</code></pre>
+
+    <h2>Ограничения</h2>
+    <p>Автоматическое обнаружение ПДн не гарантирует 100% полноту. Для production-потоков добавляйте авторизацию, аудит, rate limiting и выборочную ручную проверку результатов.</p>
+  </main>
+</body>
+</html>
