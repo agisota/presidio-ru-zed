@@ -21,6 +21,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
+      minio-init:
+        condition: service_completed_successfully
       analyzer:
         condition: service_healthy
       anonymizer:
@@ -35,12 +37,49 @@ services:
       PROCESSOR_CHUNK_SIZE: "12000"
       PROCESSOR_PREVIEW_CHARS: "300000"
       PRESIDIO_TIMEOUT: "180"
+      BIT_S3_ENDPOINT: "http://minio:9000"
+      AWS_ENDPOINT_URL_S3: "http://minio:9000"
+      S3_CONNECT_TIMEOUT: "3"
+      S3_READ_TIMEOUT: "30"
+      S3_MAX_ATTEMPTS: "2"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    env_file:
+      - path: ./processor.env
+        required: false
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        MINIO_ROOT_USER="$${AWS_ACCESS_KEY_ID}" \
+        MINIO_ROOT_PASSWORD="$${AWS_SECRET_ACCESS_KEY}" \
+        minio server /data --console-address ":9001"
+    volumes:
+      - data_zed_minio:/data
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    restart: "no"
+    depends_on:
+      - minio
+    env_file:
+      - path: ./processor.env
+        required: false
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for attempt in $$(seq 1 60); do
+          mc alias set data-zed http://minio:9000 "$${AWS_ACCESS_KEY_ID}" "$${AWS_SECRET_ACCESS_KEY}" && break
+          sleep 1
+        done
+        mc mb --ignore-existing "data-zed/$${BIT_S3_BUCKET:-agent-artifacts}"
 
   analyzer:
     build:
@@ -81,3 +120,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+volumes:
+  data_zed_minio:
