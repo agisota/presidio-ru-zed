@@ -111,11 +111,11 @@ def _set_job(job_id: str, patch: dict, persist: bool = True) -> None:
 
 def _run_job(job_id: str, filename: str, content: bytes, content_type: str | None, language: str) -> None:
     try:
-        _set_job(job_id, {"status": "extracting", "progress": 10})
+        _set_job(job_id, {"status": "extracting", "progress": 10}, persist=False)
         text = extract_text(filename, content, content_type)
         if not text.strip():
             raise ValueError("Документ не содержит извлекаемого текста.")
-        _set_job(job_id, {"status": "processing", "progress": 35, "characters": len(text)})
+        _set_job(job_id, {"status": "processing", "progress": 35, "characters": len(text)}, persist=False)
         result = _processor().process_text(job_id=job_id, filename=filename, text=text, language=language)
         result["progress"] = 100
         result["completed_at"] = datetime.now(UTC).isoformat()
