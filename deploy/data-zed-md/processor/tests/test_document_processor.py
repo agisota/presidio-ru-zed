@@ -3,6 +3,7 @@ import json
 from document_processor import (
     AnalyzerResult,
     DocumentProcessor,
+    S3Storage,
     apply_fact_replacements,
     build_storage_keys,
     chunk_text,
@@ -104,6 +105,29 @@ def test_build_storage_keys_uses_private_s3_taxonomy():
     assert keys["final"].endswith("/derived/final.txt")
     assert keys["manifest"].endswith("/MANIFEST.json")
     assert keys["state"].endswith("/state.json")
+
+
+def test_s3_storage_uses_path_style_and_short_timeouts(monkeypatch):
+    captured = {}
+
+    def fake_client(service, **kwargs):
+        captured["service"] = service
+        captured.update(kwargs)
+        return object()
+
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", fake_client)
+    monkeypatch.setenv("BIT_S3_BUCKET", "agent-artifacts")
+    monkeypatch.setenv("BIT_S3_ENDPOINT", "https://bit.blenny-gar.ts.net")
+
+    S3Storage()
+
+    assert captured["service"] == "s3"
+    assert captured["endpoint_url"] == "https://bit.blenny-gar.ts.net"
+    assert captured["config"].s3["addressing_style"] == "path"
+    assert captured["config"].connect_timeout == 3
+    assert captured["config"].read_timeout == 30
 
 
 def test_process_text_document_stores_artifacts_and_returns_visual_replacements():

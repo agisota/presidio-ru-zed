@@ -206,12 +206,20 @@ class S3Storage:
         region_name: str | None = None,
     ):
         import boto3
+        from botocore.config import Config
 
         self.bucket = bucket or os.environ["BIT_S3_BUCKET"]
+        config = Config(
+            connect_timeout=float(os.environ.get("S3_CONNECT_TIMEOUT", "3")),
+            read_timeout=float(os.environ.get("S3_READ_TIMEOUT", "30")),
+            retries={"max_attempts": int(os.environ.get("S3_MAX_ATTEMPTS", "2")), "mode": "standard"},
+            s3={"addressing_style": "path"},
+        )
         self.client = boto3.client(
             "s3",
             endpoint_url=endpoint_url or os.environ.get("BIT_S3_ENDPOINT") or os.environ.get("AWS_ENDPOINT_URL_S3"),
             region_name=region_name or os.environ.get("BIT_S3_REGION") or os.environ.get("AWS_REGION", "us-east-1"),
+            config=config,
         )
 
     def put_text(self, key: str, value: str, content_type: str = "text/plain; charset=utf-8") -> dict:
