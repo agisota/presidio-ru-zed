@@ -3,8 +3,10 @@ import json
 from document_processor import (
     AnalyzerResult,
     DocumentProcessor,
+    apply_fact_replacements,
     build_storage_keys,
     chunk_text,
+    extract_claims,
     normalize_results,
 )
 
@@ -19,6 +21,9 @@ class FakeStorage:
             "content_type": content_type,
         }
         return {"bucket": "agent-artifacts", "key": key}
+
+    def get_text(self, key):
+        return self.objects[key]["value"]
 
 
 class FakePresidio:
@@ -96,7 +101,9 @@ def test_build_storage_keys_uses_private_s3_taxonomy():
     assert keys["raw"].startswith("projects/presidio-ru-zed/work/2026-05-08/jobs/job-123/")
     assert keys["raw"].endswith("/raw/passport.txt")
     assert keys["anonymized"].endswith("/derived/anonymized.txt")
+    assert keys["final"].endswith("/derived/final.txt")
     assert keys["manifest"].endswith("/MANIFEST.json")
+    assert keys["state"].endswith("/state.json")
 
 
 def test_process_text_document_stores_artifacts_and_returns_visual_replacements():
@@ -124,3 +131,47 @@ def test_process_text_document_stores_artifacts_and_returns_visual_replacements(
     manifest = json.loads(storage.objects[result["artifacts"]["manifest"]["key"]]["value"])
     assert manifest["job_id"] == "job-123"
     assert manifest["filename"] == "passport.txt"
+
+
+def test_extract_claims_returns_replaceable_fact_spans_with_suggestions():
+    claims = extract_claims(
+        "Revenue grew 47% in 2026.\n"
+        "Coordination & control scored 53%.\n"
+        "Short label\n"
+        "Leadership remained distinctive."
+    )
+
+    assert [claim["text"] for claim in claims] == [
+        "Revenue grew 47% in 2026.",
+        "Coordination & control scored 53%.",
+        "Leadership remained distinctive.",
+    ]
+    assert claims[0]["id"] == "fact-1"
+    assert claims[0]["suggestion"] != claims[0]["text"]
+    assert claims[0]["start"] == 0
+
+
+def test_apply_fact_replacements_overrides_overlapping_pii_and_persists_final_text():
+    storage = FakeStorage()
+    processor = DocumentProcessor(storage=storage, presidio=FakePresidio(), chunk_size=128)
+    result = processor.process_text(
+        job_id="job-123",
+        filename="passport.txt",
+        text="Passport 4510 123456 confirms revenue grew 47%.",
+        language="ru",
+    )
+    claim = {
+        "id": "fact-1",
+        "start": 0,
+        "end": len("Passport 4510 123456 confirms revenue grew 47%."),
+        "text": "Passport 4510 123456 confirms revenue grew 47%.",
+        "replacement": "A sanitized business statement replaces this claim.",
+    }
+
+    final = apply_fact_replacements(
+        raw_text="Passport 4510 123456 confirms revenue grew 47%.",
+        pii_replacements=result["replacements"],
+        claims=[claim],
+    )
+
+    assert final == "A sanitized business statement replaces this claim."
