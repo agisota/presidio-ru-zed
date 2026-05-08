@@ -38,6 +38,46 @@ def test_job_api_accepts_text_and_returns_completed_result(monkeypatch):
     assert "<RU_PASSPORT>" in downloaded.text
 
 
+def test_ready_endpoint_reports_dependency_health(monkeypatch):
+    storage = FakeStorage()
+
+    def fake_probe(name, base_url):
+        return {"status": "ok", "service": name}
+
+    monkeypatch.setattr(processor_app, "_storage", lambda: storage)
+    monkeypatch.setattr(processor_app, "_probe_http_service", fake_probe)
+    client = TestClient(processor_app.app)
+
+    ready = client.get("/ready")
+
+    assert ready.status_code == 200
+    payload = ready.json()
+    assert payload["status"] == "ok"
+    assert payload["checks"]["analyzer"]["status"] == "ok"
+    assert payload["checks"]["anonymizer"]["status"] == "ok"
+    assert payload["checks"]["storage"] == {"status": "ok", "service": "storage", "bucket": "agent-artifacts"}
+
+
+def test_ready_endpoint_returns_503_when_dependency_is_down(monkeypatch):
+    storage = FakeStorage()
+
+    def fake_probe(name, base_url):
+        if name == "anonymizer":
+            return {"status": "error", "service": name, "error": "connection refused"}
+        return {"status": "ok", "service": name}
+
+    monkeypatch.setattr(processor_app, "_storage", lambda: storage)
+    monkeypatch.setattr(processor_app, "_probe_http_service", fake_probe)
+    client = TestClient(processor_app.app)
+
+    ready = client.get("/ready")
+
+    assert ready.status_code == 503
+    payload = ready.json()
+    assert payload["status"] == "degraded"
+    assert payload["checks"]["anonymizer"]["error"] == "connection refused"
+
+
 def test_job_api_recovers_completed_state_from_storage_after_memory_clear(monkeypatch):
     storage = FakeStorage()
 

@@ -237,6 +237,10 @@ class S3Storage:
         response = self.client.get_object(Bucket=self.bucket, Key=key)
         return response["Body"].read().decode("utf-8")
 
+    def check(self) -> dict:
+        self.client.head_bucket(Bucket=self.bucket)
+        return {"bucket": self.bucket}
+
 
 class LocalStorage:
     def __init__(self):
@@ -248,6 +252,9 @@ class LocalStorage:
 
     def get_text(self, key: str) -> str:
         return self.objects[key]["value"]
+
+    def check(self) -> dict:
+        return {"bucket": "local-dev"}
 
 
 class PresidioClient:

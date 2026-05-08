@@ -26,6 +26,9 @@ class FakeStorage:
     def get_text(self, key):
         return self.objects[key]["value"]
 
+    def check(self):
+        return {"bucket": "agent-artifacts"}
+
 
 class FakePresidio:
     def analyze(self, text, language):
@@ -133,6 +136,28 @@ def test_s3_storage_uses_path_style_and_short_timeouts(monkeypatch):
     assert captured["config"].s3["addressing_style"] == "path"
     assert captured["config"].connect_timeout == 3
     assert captured["config"].read_timeout == 30
+
+
+def test_s3_storage_check_uses_head_bucket(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def head_bucket(self, **kwargs):
+            captured.update(kwargs)
+
+    def fake_client(service, **kwargs):
+        captured["service"] = service
+        return FakeClient()
+
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", fake_client)
+    monkeypatch.setenv("BIT_S3_BUCKET", "agent-artifacts")
+
+    storage = S3Storage()
+
+    assert storage.check() == {"bucket": "agent-artifacts"}
+    assert captured["Bucket"] == "agent-artifacts"
 
 
 def test_process_text_document_stores_artifacts_and_returns_visual_replacements():

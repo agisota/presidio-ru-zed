@@ -5,7 +5,7 @@ import threading
 from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from document_processor import (
@@ -64,6 +64,26 @@ def _processor() -> DocumentProcessor:
 
 def _public_job(job: dict) -> dict:
     return {key: value for key, value in job.items() if not key.startswith("_")}
+
+
+def _probe_http_service(name: str, base_url: str) -> dict:
+    import httpx
+
+    try:
+        response = httpx.get(f"{base_url.rstrip('/')}/health", timeout=3.0)
+        response.raise_for_status()
+        return {"status": "ok", "service": name}
+    except Exception as exc:
+        return {"status": "error", "service": name, "error": str(exc)[:200]}
+
+
+def _probe_storage() -> dict:
+    try:
+        storage = _storage()
+        details = storage.check() if hasattr(storage, "check") else {"bucket": getattr(storage, "bucket", "unknown")}
+        return {"status": "ok", "service": "storage", **details}
+    except Exception as exc:
+        return {"status": "error", "service": "storage", "error": str(exc)[:200]}
 
 
 def _state_key(job_id: str, filename: str = "state.json") -> str:
@@ -150,6 +170,24 @@ def health() -> dict:
         "chunk_size": CHUNK_SIZE,
         "preview_chars": PREVIEW_CHARS,
     }
+
+
+@app.get("/ready")
+def ready() -> JSONResponse:
+    analyzer_url = os.environ.get("ANALYZER_URL", "http://analyzer:3000")
+    anonymizer_url = os.environ.get("ANONYMIZER_URL", "http://anonymizer:3000")
+    checks = {
+        "analyzer": _probe_http_service("analyzer", analyzer_url),
+        "anonymizer": _probe_http_service("anonymizer", anonymizer_url),
+        "storage": _probe_storage(),
+    }
+    is_ready = all(check["status"] == "ok" for check in checks.values())
+    payload = {
+        "status": "ok" if is_ready else "degraded",
+        "service": "data-zed-md-processor",
+        "checks": checks,
+    }
+    return JSONResponse(status_code=200 if is_ready else 503, content=payload)
 
 
 @app.post("/jobs", status_code=202)

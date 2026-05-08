@@ -155,6 +155,18 @@
       color: var(--muted);
       font-size: 13px;
     }
+    .service-card > div {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .service-card small {
+      overflow: hidden;
+      color: #7b8b95;
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .service-card strong {
       color: var(--warn);
       font-variant-numeric: tabular-nums;
@@ -325,6 +337,26 @@
       border: 1px solid var(--line);
       border-radius: 8px;
     }
+    .review-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .review-toolbar input,
+    .review-toolbar select {
+      min-height: 38px;
+    }
+    .review-search {
+      flex: 1 1 240px;
+      min-width: 160px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      color: var(--text);
+      padding: 9px 10px;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -457,10 +489,10 @@
     </header>
 
     <section class="status-strip" aria-label="Статус сервисов">
-      <div class="service-card" id="gatewayCard"><span>Gateway</span><strong id="gatewayState">Проверка</strong></div>
-      <div class="service-card" id="processorCard"><span>Processor</span><strong id="processorState">Проверка</strong></div>
-      <div class="service-card" id="analyzerCard"><span>Analyzer</span><strong id="analyzerState">Проверка</strong></div>
-      <div class="service-card" id="anonymizerCard"><span>Anonymizer</span><strong id="anonymizerState">Проверка</strong></div>
+      <div class="service-card" id="gatewayCard"><div><span>Gateway</span><small id="gatewayDetail">public route</small></div><strong id="gatewayState">Проверка</strong></div>
+      <div class="service-card" id="processorCard"><div><span>Processor</span><small id="processorDetail">dependencies</small></div><strong id="processorState">Проверка</strong></div>
+      <div class="service-card" id="analyzerCard"><div><span>Analyzer</span><small id="analyzerDetail">API health</small></div><strong id="analyzerState">Проверка</strong></div>
+      <div class="service-card" id="anonymizerCard"><div><span>Anonymizer</span><small id="anonymizerDetail">API health</small></div><strong id="anonymizerState">Проверка</strong></div>
     </section>
 
     <section class="workspace">
@@ -536,6 +568,15 @@
             <span class="badge" id="replacementCount">0 замен</span>
           </div>
           <div class="panel-body">
+            <div class="review-toolbar" aria-label="Фильтры замен">
+              <label class="field-label compact" for="entityFilter">Тип</label>
+              <select id="entityFilter" autocomplete="off">
+                <option value="">Все типы</option>
+              </select>
+              <label class="field-label compact" for="replacementSearch">Поиск</label>
+              <input id="replacementSearch" class="review-search" type="search" autocomplete="off" placeholder="Фрагмент или замена">
+              <span class="badge" id="visibleReplacementCount">0 видно</span>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead>
@@ -619,6 +660,13 @@
     const processorState = document.getElementById("processorState");
     const analyzerState = document.getElementById("analyzerState");
     const anonymizerState = document.getElementById("anonymizerState");
+    const gatewayDetail = document.getElementById("gatewayDetail");
+    const processorDetail = document.getElementById("processorDetail");
+    const analyzerDetail = document.getElementById("analyzerDetail");
+    const anonymizerDetail = document.getElementById("anonymizerDetail");
+    const entityFilter = document.getElementById("entityFilter");
+    const replacementSearch = document.getElementById("replacementSearch");
+    const visibleReplacementCount = document.getElementById("visibleReplacementCount");
 
     let currentAnonymizedText = "";
     let currentJobId = "";
@@ -630,7 +678,7 @@
     let syncingScroll = false;
 
     function escapeHtml(value) {
-      return value.replace(/[&<>"']/g, (char) => ({
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
         "&": "&amp;",
         "<": "&lt;",
         ">": "&gt;",
@@ -736,6 +784,29 @@
       saveFactsBtn.disabled = !currentJobId || (currentClaims.length === 0 && currentFindings.length === 0);
     }
 
+    function refreshEntityFilter(replacements) {
+      const previous = entityFilter.value;
+      const types = [...new Set(replacements.map((item) => item.entity_type).filter(Boolean))].sort();
+      entityFilter.innerHTML = '<option value="">Все типы</option>' + types
+        .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`)
+        .join("");
+      entityFilter.value = types.includes(previous) ? previous : "";
+    }
+
+    function updateReplacementFilters() {
+      const type = entityFilter.value;
+      const query = replacementSearch.value.trim().toLowerCase();
+      let visible = 0;
+      replacementRows.querySelectorAll("tr[data-finding-index]").forEach((row) => {
+        const matchesType = !type || row.dataset.entityType === type;
+        const matchesQuery = !query || (row.dataset.filterText || "").includes(query);
+        const shouldShow = matchesType && matchesQuery;
+        row.hidden = !shouldShow;
+        if (shouldShow) visible += 1;
+      });
+      visibleReplacementCount.textContent = `${visible} видно`;
+    }
+
     function setActiveFinding(index, shouldScroll = true) {
       if (!currentFindings.length) {
         activeFindingIndex = -1;
@@ -762,13 +833,16 @@
     }
 
     function renderReplacements(replacements) {
+      refreshEntityFilter(replacements);
       if (!replacements.length) {
         replacementRows.innerHTML = '<tr><td colspan="5" class="empty">PII не найдено.</td></tr>';
+        visibleReplacementCount.textContent = "0 видно";
         return;
       }
       replacementRows.innerHTML = replacements.map((item) => {
         const replacement = item.replacement || `<${item.entity_type}>`;
-        return `<tr class="clickable" data-finding-index="${item.findingIndex}">
+        const filterText = `${item.entity_type || ""} ${item.original || ""} ${replacement}`.toLowerCase();
+        return `<tr class="clickable" data-finding-index="${item.findingIndex}" data-entity-type="${escapeHtml(item.entity_type)}" data-filter-text="${escapeHtml(filterText)}">
           <td><code>${escapeHtml(item.entity_type)}</code></td>
           <td>${Number(item.score || 0).toFixed(2)}</td>
           <td>${escapeHtml(item.original || "")}</td>
@@ -784,6 +858,7 @@
           setActiveFinding(Number(row.dataset.findingIndex));
         });
       });
+      updateReplacementFilters();
     }
 
     function renderClaims(claims) {
@@ -966,6 +1041,9 @@
       anonymized.className = "document empty";
       anonymized.textContent = "Здесь будет текст после замен.";
       replacementRows.innerHTML = '<tr><td colspan="5" class="empty">Пока замен нет.</td></tr>';
+      entityFilter.value = "";
+      replacementSearch.value = "";
+      visibleReplacementCount.textContent = "0 видно";
       claimRows.innerHTML = '<tr><td colspan="4" class="empty">Факты и утверждения появятся после анализа.</td></tr>';
       findingCount.textContent = "0 находок";
       findingPosition.textContent = "0/0";
@@ -1000,17 +1078,39 @@
       setStatus("Файл выбран. Backend извлечет текст после запуска.", "ok");
     }
 
-    async function probeService(url, stateEl) {
+    function serviceDetail(url, payload) {
+      if (payload?.checks) {
+        const values = Object.values(payload.checks);
+        const healthy = values.filter((item) => item.status === "ok").length;
+        return `${healthy}/${values.length} deps`;
+      }
+      if (url.includes("/processor/health") && payload?.storage) return `storage ${payload.storage}`;
+      if (url === "/health") return "public route";
+      return "health";
+    }
+
+    async function probeService(url, stateEl, detailEl) {
       const card = stateEl.closest(".service-card");
       try {
         const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok) throw new Error(String(response.status));
+        const text = await response.text();
+        let payload = null;
+        try {
+          payload = text ? JSON.parse(text) : null;
+        } catch {
+          payload = null;
+        }
+        if (!response.ok) throw new Error(payload?.status || String(response.status));
         stateEl.textContent = "OK";
+        detailEl.textContent = serviceDetail(url, payload);
+        card.title = "";
         card.classList.add("ok");
         card.classList.remove("error");
         return true;
-      } catch {
+      } catch (error) {
         stateEl.textContent = "Ошибка";
+        detailEl.textContent = error.message || "unavailable";
+        card.title = error.message || "";
         card.classList.remove("ok");
         card.classList.add("error");
         return false;
@@ -1019,10 +1119,10 @@
 
     async function checkHealth() {
       const results = await Promise.all([
-        probeService("/health", gatewayState),
-        probeService("/processor/health", processorState),
-        probeService("/analyzer/health", analyzerState),
-        probeService("/anonymizer/health", anonymizerState)
+        probeService("/health", gatewayState, gatewayDetail),
+        probeService("/processor/ready", processorState, processorDetail),
+        probeService("/analyzer/health", analyzerState, analyzerDetail),
+        probeService("/anonymizer/health", anonymizerState, anonymizerDetail)
       ]);
       const healthy = results.filter(Boolean).length;
       healthDot.classList.remove("ok", "error");
@@ -1050,6 +1150,8 @@
     clearBtn.addEventListener("click", resetUi);
     prevFindingBtn.addEventListener("click", () => setActiveFinding(activeFindingIndex - 1));
     nextFindingBtn.addEventListener("click", () => setActiveFinding(activeFindingIndex + 1));
+    entityFilter.addEventListener("change", updateReplacementFilters);
+    replacementSearch.addEventListener("input", updateReplacementFilters);
     autoFactsBtn.addEventListener("click", autoReplaceFacts);
     saveFactsBtn.addEventListener("click", saveFactReplacements);
     copyBtn.addEventListener("click", async () => {
