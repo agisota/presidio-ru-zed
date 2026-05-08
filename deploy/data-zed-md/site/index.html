@@ -3,17 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>data.zed.md - Presidio RU</title>
+  <title>data.zed.md - обезличивание документов</title>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #f7f7f4;
+      color-scheme: light;
+      --bg: #f5f7f8;
+      --surface: #ffffff;
+      --surface-soft: #eef3f4;
       --text: #1f2933;
-      --muted: #52606d;
-      --line: #d9e2ec;
+      --muted: #667784;
+      --line: #d7e0e4;
       --accent: #0f766e;
-      --panel: #ffffff;
+      --accent-strong: #115e59;
+      --danger: #b42318;
+      --warn: #a15c07;
+      --pii: #fff2a8;
+      --pii-border: #d6a300;
       --code: #111827;
+      --shadow: 0 12px 32px rgba(31, 41, 51, 0.08);
     }
     * { box-sizing: border-box; }
     body {
@@ -21,99 +28,574 @@
       background: var(--bg);
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.55;
+      line-height: 1.45;
+    }
+    button, textarea, select {
+      font: inherit;
+    }
+    button {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: var(--surface);
+      color: var(--accent-strong);
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
     main {
-      width: min(1120px, calc(100% - 32px));
+      width: min(1440px, calc(100% - 32px));
       margin: 0 auto;
-      padding: 40px 0 56px;
+      padding: 24px 0 40px;
     }
     header {
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 24px;
-      margin-bottom: 28px;
-    }
-    h1, h2, h3 { line-height: 1.15; margin: 0; }
-    h1 { font-size: clamp(32px, 5vw, 56px); letter-spacing: 0; }
-    h2 { font-size: 24px; margin-top: 28px; }
-    h3 { font-size: 17px; margin-top: 18px; }
-    p { color: var(--muted); max-width: 820px; }
-    a { color: var(--accent); }
-    .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 14px;
-      margin: 20px 0;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 16px;
     }
-    .card {
-      background: var(--panel);
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font-size: 30px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 18px;
+      line-height: 1.2;
+    }
+    h3 {
+      font-size: 15px;
+      line-height: 1.2;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin-top: 8px;
+      max-width: 760px;
+    }
+    .health {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--warn);
+      display: inline-block;
+    }
+    .dot.ok { background: var(--accent); }
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 18px;
+      box-shadow: var(--shadow);
     }
-    code, pre {
-      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-body { padding: 16px; }
+    .stack { display: grid; gap: 14px; }
+    .dropzone {
+      border: 1px dashed #9fb2bb;
+      border-radius: 8px;
+      background: var(--surface-soft);
+      min-height: 132px;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      text-align: center;
+      cursor: pointer;
+    }
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: #e3f3ef;
+    }
+    .dropzone strong { display: block; }
+    .dropzone span {
+      color: var(--muted);
+      font-size: 13px;
+      display: block;
+      margin-top: 6px;
+    }
+    input[type="file"] { display: none; }
+    textarea {
+      width: 100%;
+      min-height: 240px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--text);
+      background: #fbfcfd;
+    }
+    select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 9px 10px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .meta {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .status {
+      min-height: 24px;
+      color: var(--muted);
       font-size: 14px;
     }
-    pre {
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--accent-strong); }
+    .results {
+      display: grid;
+      grid-template-rows: auto auto;
+      gap: 16px;
+    }
+    .preview-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+    .document {
+      min-height: 360px;
+      max-height: 62vh;
       overflow: auto;
-      background: var(--code);
-      color: #f8fafc;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 16px;
+      padding: 14px;
     }
-    .endpoint {
-      display: inline-block;
-      font-weight: 700;
-      color: var(--text);
+    .pii {
+      background: var(--pii);
+      border-bottom: 2px solid var(--pii-border);
+      border-radius: 4px;
+      padding: 1px 2px;
     }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0f1419;
-        --text: #e5e7eb;
-        --muted: #a7b0bb;
-        --line: #2f3a45;
-        --accent: #2dd4bf;
-        --panel: #151c24;
-        --code: #05070a;
+    .empty {
+      color: var(--muted);
+      font-family: inherit;
+    }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      min-width: 720px;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 10px;
+    }
+    th {
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    tr:last-child td { border-bottom: 0; }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--surface-soft);
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    @media (max-width: 980px) {
+      header, .workspace, .preview-grid {
+        grid-template-columns: 1fr;
       }
+      .health { justify-self: start; }
     }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>Presidio RU</h1>
-      <p>Сервис для обнаружения и обезличивания персональных данных в русскоязычных и англоязычных текстах. Основан на Microsoft Presidio и развернут как API-поверхность data.zed.md.</p>
+      <div>
+        <h1>Обезличивание документов</h1>
+        <p class="subtitle">Загрузите текстовый документ или вставьте содержимое: сервис покажет найденные персональные данные, позиции замен и готовый обезличенный результат.</p>
+      </div>
+      <div class="health" aria-live="polite"><span id="healthDot" class="dot"></span><span id="healthText">Проверка API</span></div>
     </header>
 
-    <section class="grid" aria-label="Сервисы">
-      <article class="card">
-        <h2>Analyzer</h2>
-        <p><span class="endpoint">/analyzer/analyze</span> находит сущности ПДн: ФИО, email, телефон, банковские карты, ИНН, СНИЛС, паспорт РФ и другие шаблоны.</p>
-      </article>
-      <article class="card">
-        <h2>Anonymizer</h2>
-        <p><span class="endpoint">/anonymizer/anonymize</span> заменяет найденные фрагменты масками, хешами или пользовательскими операторами Presidio.</p>
-      </article>
-      <article class="card">
-        <h2>Health</h2>
-        <p><span class="endpoint">/health</span>, <span class="endpoint">/analyzer/health</span> и <span class="endpoint">/anonymizer/health</span> используются для проверки живости сервиса.</p>
-      </article>
+    <section class="workspace">
+      <aside class="panel">
+        <div class="panel-header">
+          <h2>Документ</h2>
+          <span class="badge" id="charCount">0 символов</span>
+        </div>
+        <div class="panel-body stack">
+          <label class="dropzone" id="dropzone">
+            <input id="fileInput" type="file" accept=".txt,.md,.csv,.json,.log,text/*">
+            <span>
+              <strong>Перетащите файл сюда</strong>
+              <span>TXT, Markdown, CSV, JSON, LOG. PDF/DOCX требуют отдельного extractor backend.</span>
+            </span>
+          </label>
+          <textarea id="sourceText" spellcheck="false" placeholder="Или вставьте текст документа сюда..."></textarea>
+          <div class="controls">
+            <select id="language">
+              <option value="ru" selected>Русский</option>
+              <option value="en">English</option>
+            </select>
+            <button id="analyzeBtn">Найти и обезличить</button>
+            <button id="clearBtn" class="secondary" type="button">Очистить</button>
+          </div>
+          <div class="meta">
+            <span id="fileMeta">Файл не выбран</span>
+            <span>Контент обрабатывается в браузере и отправляется только в Analyzer/Anonymizer API.</span>
+          </div>
+          <div id="status" class="status" aria-live="polite"></div>
+        </div>
+      </aside>
+
+      <section class="results">
+        <div class="preview-grid">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Оригинал с подсветкой</h2>
+              <span class="badge" id="findingCount">0 находок</span>
+            </div>
+            <div class="panel-body">
+              <div id="highlighted" class="document empty">Результаты появятся после анализа.</div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Обезличенный результат</h2>
+              <div class="actions">
+                <button id="copyBtn" class="secondary" type="button" disabled>Копировать</button>
+                <button id="downloadBtn" class="secondary" type="button" disabled>Скачать</button>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div id="anonymized" class="document empty">Здесь будет текст после замен.</div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel">
+          <div class="panel-header">
+            <h2>Что заменено</h2>
+            <span class="badge" id="replacementCount">0 замен</span>
+          </div>
+          <div class="panel-body">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Тип</th>
+                    <th>Score</th>
+                    <th>Исходный фрагмент</th>
+                    <th>Замена</th>
+                    <th>Диапазон</th>
+                  </tr>
+                </thead>
+                <tbody id="replacementRows">
+                  <tr><td colspan="5" class="empty">Пока замен нет.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </article>
+      </section>
     </section>
-
-    <h2>Пример анализа</h2>
-    <pre><code>curl -fsS https://data.zed.md/analyzer/analyze \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Иван Петров, паспорт 4510 123456, ИНН 7707083893, телефон +7 916 123-45-67, email ivan@example.ru","language":"ru"}'</code></pre>
-
-    <h2>Пример обезличивания</h2>
-    <pre><code>curl -fsS https://data.zed.md/anonymizer/anonymize \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Иван Петров, телефон +7 916 123-45-67","analyzer_results":[{"start":21,"end":37,"entity_type":"RU_PHONE_NUMBER","score":1.0}]}'</code></pre>
-
-    <h2>Ограничения</h2>
-    <p>Автоматическое обнаружение ПДн не гарантирует 100% полноту. Для production-потоков добавляйте авторизацию, аудит, rate limiting и выборочную ручную проверку результатов.</p>
   </main>
+
+  <script>
+    const MAX_FILE_SIZE = 2 * 1024 * 1024;
+    const sourceText = document.getElementById("sourceText");
+    const fileInput = document.getElementById("fileInput");
+    const dropzone = document.getElementById("dropzone");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const language = document.getElementById("language");
+    const statusEl = document.getElementById("status");
+    const highlighted = document.getElementById("highlighted");
+    const anonymized = document.getElementById("anonymized");
+    const replacementRows = document.getElementById("replacementRows");
+    const findingCount = document.getElementById("findingCount");
+    const replacementCount = document.getElementById("replacementCount");
+    const charCount = document.getElementById("charCount");
+    const fileMeta = document.getElementById("fileMeta");
+    const copyBtn = document.getElementById("copyBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const healthDot = document.getElementById("healthDot");
+    const healthText = document.getElementById("healthText");
+
+    let currentAnonymizedText = "";
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      })[char]);
+    }
+
+    function setStatus(message, kind = "") {
+      statusEl.textContent = message;
+      statusEl.className = `status ${kind}`.trim();
+    }
+
+    function updateCounts() {
+      charCount.textContent = `${sourceText.value.length} символов`;
+    }
+
+    function normalizeResults(results, textLength) {
+      return [...results]
+        .filter((item) => Number.isInteger(item.start) && Number.isInteger(item.end))
+        .filter((item) => item.start >= 0 && item.end <= textLength && item.end > item.start)
+        .sort((a, b) => a.start - b.start || b.end - a.end || b.score - a.score)
+        .reduce((accepted, item) => {
+          const previous = accepted[accepted.length - 1];
+          if (previous && item.start < previous.end) return accepted;
+          accepted.push(item);
+          return accepted;
+        }, []);
+    }
+
+    function renderHighlights(text, results) {
+      if (!text) {
+        highlighted.className = "document empty";
+        highlighted.textContent = "Вставьте или загрузите документ.";
+        return;
+      }
+      if (!results.length) {
+        highlighted.className = "document";
+        highlighted.textContent = text;
+        return;
+      }
+      let cursor = 0;
+      const parts = [];
+      for (const item of results) {
+        parts.push(escapeHtml(text.slice(cursor, item.start)));
+        const fragment = escapeHtml(text.slice(item.start, item.end));
+        parts.push(`<mark class="pii" title="${escapeHtml(item.entity_type)} score ${Number(item.score).toFixed(2)}">${fragment}</mark>`);
+        cursor = item.end;
+      }
+      parts.push(escapeHtml(text.slice(cursor)));
+      highlighted.className = "document";
+      highlighted.innerHTML = parts.join("");
+    }
+
+    function renderReplacements(text, analyzerResults, anonymizerItems) {
+      if (!analyzerResults.length) {
+        replacementRows.innerHTML = '<tr><td colspan="5" class="empty">PII не найдено.</td></tr>';
+        return;
+      }
+      replacementRows.innerHTML = analyzerResults.map((item, index) => {
+        const replacement = anonymizerItems[index]?.text || `<${item.entity_type}>`;
+        const original = text.slice(item.start, item.end);
+        return `<tr>
+          <td><code>${escapeHtml(item.entity_type)}</code></td>
+          <td>${Number(item.score || 0).toFixed(2)}</td>
+          <td>${escapeHtml(original)}</td>
+          <td>${escapeHtml(replacement)}</td>
+          <td>${item.start}-${item.end}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`${response.status} ${response.statusText}: ${body.slice(0, 240)}`);
+      }
+      return response.json();
+    }
+
+    async function analyzeDocument() {
+      const text = sourceText.value;
+      if (!text.trim()) {
+        setStatus("Вставьте текст или загрузите файл.", "error");
+        return;
+      }
+      analyzeBtn.disabled = true;
+      copyBtn.disabled = true;
+      downloadBtn.disabled = true;
+      setStatus("Анализ документа...");
+      try {
+        const rawResults = await postJson("/analyzer/analyze", {
+          text,
+          language: language.value
+        });
+        const analyzerResults = normalizeResults(rawResults, text.length);
+        renderHighlights(text, analyzerResults);
+        findingCount.textContent = `${analyzerResults.length} находок`;
+
+        setStatus("Применение замен...");
+        const anonymizerResult = await postJson("/anonymizer/anonymize", {
+          text,
+          analyzer_results: analyzerResults
+        });
+        currentAnonymizedText = anonymizerResult.text || "";
+        anonymized.className = "document";
+        anonymized.textContent = currentAnonymizedText || "Anonymizer вернул пустой результат.";
+        const items = anonymizerResult.items || [];
+        renderReplacements(text, analyzerResults, items);
+        replacementCount.textContent = `${items.length || analyzerResults.length} замен`;
+        copyBtn.disabled = !currentAnonymizedText;
+        downloadBtn.disabled = !currentAnonymizedText;
+        setStatus("Готово: документ проанализирован и обезличен.", "ok");
+      } catch (error) {
+        setStatus(`Ошибка: ${error.message}`, "error");
+      } finally {
+        analyzeBtn.disabled = false;
+      }
+    }
+
+    function resetUi() {
+      sourceText.value = "";
+      currentAnonymizedText = "";
+      fileInput.value = "";
+      fileMeta.textContent = "Файл не выбран";
+      highlighted.className = "document empty";
+      highlighted.textContent = "Результаты появятся после анализа.";
+      anonymized.className = "document empty";
+      anonymized.textContent = "Здесь будет текст после замен.";
+      replacementRows.innerHTML = '<tr><td colspan="5" class="empty">Пока замен нет.</td></tr>';
+      findingCount.textContent = "0 находок";
+      replacementCount.textContent = "0 замен";
+      copyBtn.disabled = true;
+      downloadBtn.disabled = true;
+      setStatus("");
+      updateCounts();
+    }
+
+    async function loadFile(file) {
+      if (!file) return;
+      const extension = file.name.split(".").pop().toLowerCase();
+      if (["pdf", "doc", "docx", "rtf"].includes(extension)) {
+        setStatus("PDF/DOC/DOCX пока не парсятся в браузере. Нужен extractor backend; загрузите TXT/MD/CSV/JSON или вставьте текст.", "error");
+        return;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        setStatus("Файл больше 2 MB. Для больших документов нужен backend queue/extractor.", "error");
+        return;
+      }
+      if (file.type && !file.type.startsWith("text/") && !["txt", "md", "csv", "json", "log"].includes(extension)) {
+        setStatus("Неподдерживаемый формат. Сейчас принимаются текстовые документы.", "error");
+        return;
+      }
+      sourceText.value = await file.text();
+      fileMeta.textContent = `${file.name} · ${Math.round(file.size / 1024)} KB`;
+      updateCounts();
+      setStatus("Файл загружен. Запустите анализ.", "ok");
+    }
+
+    async function checkHealth() {
+      try {
+        const response = await fetch("/health", { cache: "no-store" });
+        if (!response.ok) throw new Error(String(response.status));
+        healthDot.classList.add("ok");
+        healthText.textContent = "API доступен";
+      } catch {
+        healthDot.classList.remove("ok");
+        healthText.textContent = "API недоступен";
+      }
+    }
+
+    fileInput.addEventListener("change", () => loadFile(fileInput.files[0]));
+    sourceText.addEventListener("input", updateCounts);
+    analyzeBtn.addEventListener("click", analyzeDocument);
+    clearBtn.addEventListener("click", resetUi);
+    copyBtn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(currentAnonymizedText);
+      setStatus("Обезличенный текст скопирован.", "ok");
+    });
+    downloadBtn.addEventListener("click", () => {
+      const blob = new Blob([currentAnonymizedText], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "anonymized-document.txt";
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("dragover");
+      });
+    });
+    dropzone.addEventListener("drop", (event) => loadFile(event.dataTransfer.files[0]));
+
+    updateCounts();
+    checkHealth();
+  </script>
 </body>
 </html>
