@@ -379,9 +379,18 @@ class DocumentProcessor:
 
     @staticmethod
     def _build_replacements(text: str, analyzer_results: list[AnalyzerResult], anonymizer_items: list[dict]) -> list[dict]:
+        ordered_items = sorted(
+            anonymizer_items,
+            key=lambda item: (
+                item.get("start") is None,
+                int(item.get("start") or 0),
+                int(item.get("end") or 0),
+            ),
+        )
         replacements = []
         for index, result in enumerate(analyzer_results):
-            replacement = anonymizer_items[index].get("text") if index < len(anonymizer_items) else None
+            anonymizer_item = ordered_items[index] if index < len(ordered_items) else {}
+            replacement = anonymizer_item.get("text")
             replacements.append(
                 {
                     "entity_type": result.entity_type,
@@ -390,8 +399,8 @@ class DocumentProcessor:
                     "end": result.end,
                     "original": text[result.start : result.end],
                     "replacement": replacement or f"<{result.entity_type}>",
-                    "replacement_start": anonymizer_items[index].get("start") if index < len(anonymizer_items) else None,
-                    "replacement_end": anonymizer_items[index].get("end") if index < len(anonymizer_items) else None,
+                    "replacement_start": anonymizer_item.get("start"),
+                    "replacement_end": anonymizer_item.get("end"),
                 }
             )
         return replacements

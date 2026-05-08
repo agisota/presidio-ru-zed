@@ -15,6 +15,8 @@
       --line: #d7e0e4;
       --accent: #0f766e;
       --accent-strong: #115e59;
+      --accent-soft: #dff7ef;
+      --info: #1d4ed8;
       --danger: #b42318;
       --warn: #a15c07;
       --pii: #fff2a8;
@@ -29,6 +31,8 @@
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       line-height: 1.45;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
     }
     button, input, textarea, select {
       font: inherit;
@@ -41,10 +45,28 @@
       padding: 10px 14px;
       font-weight: 700;
       cursor: pointer;
+      touch-action: manipulation;
+      transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
     }
     button.secondary {
       background: var(--surface);
       color: var(--accent-strong);
+    }
+    button:hover:not(:disabled) {
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+      transform: translateY(-1px);
+    }
+    button.secondary:hover:not(:disabled) {
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+    button:focus-visible,
+    input:focus-visible,
+    textarea:focus-visible,
+    select:focus-visible {
+      outline: 3px solid rgba(29, 78, 216, 0.28);
+      outline-offset: 2px;
     }
     button.icon {
       width: 36px;
@@ -108,6 +130,33 @@
       display: inline-block;
     }
     .dot.ok { background: var(--accent); }
+    .dot.error { background: var(--danger); }
+    .status-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .service-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .service-card strong {
+      color: var(--warn);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .service-card.ok strong { color: var(--accent-strong); }
+    .service-card.error strong { color: var(--danger); }
     .workspace {
       display: grid;
       grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
@@ -130,6 +179,18 @@
     }
     .panel-body { padding: 16px; }
     .stack { display: grid; gap: 14px; }
+    .field-label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .field-label.compact {
+      align-self: center;
+      margin-right: -2px;
+    }
     .dropzone {
       border: 1px dashed #9fb2bb;
       border-radius: 8px;
@@ -226,6 +287,7 @@
       border-radius: 8px;
       padding: 14px;
       scroll-behavior: smooth;
+      overscroll-behavior: contain;
     }
     .pii {
       background: var(--pii);
@@ -255,6 +317,7 @@
       border-collapse: collapse;
       font-size: 14px;
       min-width: 720px;
+      font-variant-numeric: tabular-nums;
     }
     th, td {
       text-align: left;
@@ -329,10 +392,21 @@
       max-width: 520px;
     }
     @media (max-width: 980px) {
-      header, .workspace, .preview-grid {
+      header, .workspace, .preview-grid, .status-strip {
         grid-template-columns: 1fr;
       }
       .health { justify-self: start; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 1ms !important;
+      }
+      button:hover:not(:disabled) {
+        transform: none;
+      }
     }
   </style>
 </head>
@@ -346,6 +420,13 @@
       <div class="health" aria-live="polite"><span id="healthDot" class="dot"></span><span id="healthText">Проверка API</span></div>
     </header>
 
+    <section class="status-strip" aria-label="Статус сервисов">
+      <div class="service-card" id="gatewayCard"><span>Gateway</span><strong id="gatewayState">Проверка</strong></div>
+      <div class="service-card" id="processorCard"><span>Processor</span><strong id="processorState">Проверка</strong></div>
+      <div class="service-card" id="analyzerCard"><span>Analyzer</span><strong id="analyzerState">Проверка</strong></div>
+      <div class="service-card" id="anonymizerCard"><span>Anonymizer</span><strong id="anonymizerState">Проверка</strong></div>
+    </section>
+
     <section class="workspace">
       <aside class="panel">
         <div class="panel-header">
@@ -354,19 +435,21 @@
         </div>
         <div class="panel-body stack">
           <label class="dropzone" id="dropzone">
-            <input id="fileInput" type="file" accept=".txt,.md,.csv,.json,.log,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+            <input id="fileInput" name="file" type="file" accept=".txt,.md,.csv,.json,.log,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
             <span>
               <strong>Перетащите файл сюда</strong>
               <span>TXT, Markdown, CSV, JSON, LOG, PDF, DOCX. Лимит backend upload: 64 MB.</span>
             </span>
           </label>
-          <textarea id="sourceText" spellcheck="false" placeholder="Или вставьте текст документа сюда..."></textarea>
+          <label class="field-label" for="sourceText">Текст документа</label>
+          <textarea id="sourceText" name="text" spellcheck="false" autocomplete="off" placeholder="Или вставьте текст документа сюда…"></textarea>
           <div class="controls">
-            <select id="language">
+            <label class="field-label compact" for="language">Язык</label>
+            <select id="language" name="language" autocomplete="off">
               <option value="ru" selected>Русский</option>
               <option value="en">English</option>
             </select>
-            <button id="analyzeBtn">Найти и обезличить</button>
+            <button id="analyzeBtn" type="button">Найти и обезличить</button>
             <button id="clearBtn" class="secondary" type="button">Очистить</button>
           </div>
           <div class="meta">
@@ -385,9 +468,9 @@
               <h2>Оригинал с подсветкой</h2>
               <div class="actions">
                 <div class="finding-nav" aria-label="Навигация по заменам">
-                  <button id="prevFindingBtn" class="secondary icon" type="button" title="Предыдущая замена" disabled>‹</button>
+                  <button id="prevFindingBtn" class="secondary icon" type="button" title="Предыдущая замена" aria-label="Предыдущая замена" disabled>‹</button>
                   <span class="badge" id="findingPosition">0/0</span>
-                  <button id="nextFindingBtn" class="secondary icon" type="button" title="Следующая замена" disabled>›</button>
+                  <button id="nextFindingBtn" class="secondary icon" type="button" title="Следующая замена" aria-label="Следующая замена" disabled>›</button>
                 </div>
                 <span class="badge" id="findingCount">0 находок</span>
               </div>
@@ -496,6 +579,10 @@
     const saveFactsBtn = document.getElementById("saveFactsBtn");
     const healthDot = document.getElementById("healthDot");
     const healthText = document.getElementById("healthText");
+    const gatewayState = document.getElementById("gatewayState");
+    const processorState = document.getElementById("processorState");
+    const analyzerState = document.getElementById("analyzerState");
+    const anonymizerState = document.getElementById("anonymizerState");
 
     let currentAnonymizedText = "";
     let currentJobId = "";
@@ -877,16 +964,43 @@
       setStatus("Файл выбран. Backend извлечет текст после запуска.", "ok");
     }
 
-    async function checkHealth() {
+    async function probeService(url, stateEl) {
+      const card = stateEl.closest(".service-card");
       try {
-        const response = await fetch("/processor/health", { cache: "no-store" });
+        const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) throw new Error(String(response.status));
-        healthDot.classList.add("ok");
-        healthText.textContent = "Processor доступен";
+        stateEl.textContent = "OK";
+        card.classList.add("ok");
+        card.classList.remove("error");
+        return true;
       } catch {
-        healthDot.classList.remove("ok");
-        healthText.textContent = "Processor недоступен";
+        stateEl.textContent = "Ошибка";
+        card.classList.remove("ok");
+        card.classList.add("error");
+        return false;
       }
+    }
+
+    async function checkHealth() {
+      const results = await Promise.all([
+        probeService("/health", gatewayState),
+        probeService("/processor/health", processorState),
+        probeService("/analyzer/health", analyzerState),
+        probeService("/anonymizer/health", anonymizerState)
+      ]);
+      const healthy = results.filter(Boolean).length;
+      healthDot.classList.remove("ok", "error");
+      if (healthy === results.length) {
+        healthDot.classList.add("ok");
+        healthText.textContent = "Все сервисы доступны";
+        return;
+      }
+      if (results[0] && results[1]) {
+        healthText.textContent = `${healthy}/${results.length} сервисов доступны`;
+        return;
+      }
+      healthDot.classList.add("error");
+      healthText.textContent = "Критический сбой API";
     }
 
     fileInput.addEventListener("change", () => loadFile(fileInput.files[0]));

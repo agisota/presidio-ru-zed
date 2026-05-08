@@ -162,6 +162,29 @@ def test_process_text_document_stores_artifacts_and_returns_visual_replacements(
     assert manifest["filename"] == "passport.txt"
 
 
+def test_build_replacements_aligns_reversed_anonymizer_items_by_output_position():
+    text = "Иван Петров, паспорт 4510 123456, телефон +7 916 123-45-67, email ivan@example.ru"
+    analyzer_results = [
+        AnalyzerResult("RU_PASSPORT", 21, 32, 1.0),
+        AnalyzerResult("RU_PHONE_NUMBER", 42, 58, 1.0),
+        AnalyzerResult("EMAIL_ADDRESS", 66, 81, 1.0),
+    ]
+    anonymizer_items = [
+        {"entity_type": "EMAIL_ADDRESS", "text": "<EMAIL_ADDRESS>", "start": 69, "end": 84},
+        {"entity_type": "RU_PHONE_NUMBER", "text": "<RU_PHONE_NUMBER>", "start": 44, "end": 61},
+        {"entity_type": "RU_PASSPORT", "text": "<RU_PASSPORT>", "start": 21, "end": 34},
+    ]
+
+    replacements = DocumentProcessor._build_replacements(text, analyzer_results, anonymizer_items)
+
+    assert [(item["entity_type"], item["replacement"]) for item in replacements] == [
+        ("RU_PASSPORT", "<RU_PASSPORT>"),
+        ("RU_PHONE_NUMBER", "<RU_PHONE_NUMBER>"),
+        ("EMAIL_ADDRESS", "<EMAIL_ADDRESS>"),
+    ]
+    assert [item["replacement_start"] for item in replacements] == [21, 44, 69]
+
+
 def test_extract_claims_returns_replaceable_fact_spans_with_suggestions():
     claims = extract_claims(
         "Revenue grew 47% in 2026.\n"
