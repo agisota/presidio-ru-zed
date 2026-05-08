@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
@@ -138,14 +139,16 @@ def _set_job(job_id: str, patch: dict, persist: bool = True) -> None:
 
 
 def _run_job(job_id: str, filename: str, content: bytes, content_type: str | None, language: str) -> None:
+    started = time.perf_counter()
     try:
-        _set_job(job_id, {"status": "extracting", "progress": 10}, persist=False)
+        _set_job(job_id, {"status": "extracting", "progress": 10, "started_at": datetime.now(UTC).isoformat()}, persist=False)
         text = extract_text(filename, content, content_type)
         if not text.strip():
             raise ValueError("Документ не содержит извлекаемого текста.")
         _set_job(job_id, {"status": "processing", "progress": 35, "characters": len(text)}, persist=False)
         result = _processor().process_text(job_id=job_id, filename=filename, text=text, language=language)
         result["progress"] = 100
+        result["duration_ms"] = int((time.perf_counter() - started) * 1000)
         result["completed_at"] = datetime.now(UTC).isoformat()
         _set_job(job_id, result)
     except Exception as exc:
@@ -155,6 +158,7 @@ def _run_job(job_id: str, filename: str, content: bytes, content_type: str | Non
                 "status": "failed",
                 "progress": 100,
                 "error": str(exc),
+                "duration_ms": int((time.perf_counter() - started) * 1000),
                 "completed_at": datetime.now(UTC).isoformat(),
             },
         )

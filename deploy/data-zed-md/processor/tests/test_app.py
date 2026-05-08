@@ -31,6 +31,8 @@ def test_job_api_accepts_text_and_returns_completed_result(monkeypatch):
     payload = completed.json()
     assert payload["status"] == "complete"
     assert payload["stats"]["entities"] == 2
+    assert isinstance(payload["duration_ms"], int)
+    assert payload["duration_ms"] >= 0
     assert payload["artifacts"]["manifest"]["key"] in storage.objects
 
     downloaded = client.get(f"/jobs/{job_id}/download")
