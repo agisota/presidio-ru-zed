@@ -1,0 +1,12 @@
+services:
+  gateway:
+    networks:
+      default: {}
+      traefik:
+        aliases:
+          - presidio-ru-gateway
+
+networks:
+  traefik:
+    external: true
+    name: agenta-oss-gh_agenta-oss-gh-network

@@ -1,0 +1,20 @@
+http:
+  routers:
+    presidio-ru-web:
+      rule: Host(`data.zed.md`)
+      entryPoints:
+        - web
+      service: presidio-ru-gateway
+      priority: 100
+    presidio-ru-websecure:
+      rule: Host(`data.zed.md`)
+      entryPoints:
+        - websecure
+      service: presidio-ru-gateway
+      priority: 100
+      tls: {}
+  services:
+    presidio-ru-gateway:
+      loadBalancer:
+        servers:
+          - url: http://presidio-ru-gateway:8080
