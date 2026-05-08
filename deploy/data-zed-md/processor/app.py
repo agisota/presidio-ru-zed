@@ -94,13 +94,15 @@ def _load_job_state(job_id: str) -> dict | None:
         return None
 
 
-def _set_job(job_id: str, patch: dict) -> None:
+def _set_job(job_id: str, patch: dict, persist: bool = True) -> None:
     with jobs_lock:
         current = jobs.get(job_id, {})
         current.update(patch)
         current["updated_at"] = datetime.now(UTC).isoformat()
         jobs[job_id] = current
         public = _public_job(current)
+    if not persist:
+        return
     state_artifact = _persist_job_state(job_id, public)
     if state_artifact:
         with jobs_lock:
@@ -175,6 +177,7 @@ async def create_job(
             "language": language,
             "created_at": datetime.now(UTC).isoformat(),
         },
+        persist=False,
     )
     background_tasks.add_task(_run_job, job_id, filename, content, content_type, language)
     return jobs[job_id]
