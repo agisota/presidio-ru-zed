@@ -180,6 +180,20 @@
     }
     .status.error { color: var(--danger); }
     .status.ok { color: var(--accent-strong); }
+    .progress {
+      height: 10px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-soft);
+    }
+    .progress span {
+      display: block;
+      width: 0%;
+      height: 100%;
+      background: var(--accent);
+      transition: width 160ms ease;
+    }
     .results {
       display: grid;
       grid-template-rows: auto auto;
@@ -272,7 +286,7 @@
     <header>
       <div>
         <h1>Обезличивание документов</h1>
-        <p class="subtitle">Загрузите текстовый документ или вставьте содержимое: сервис покажет найденные персональные данные, позиции замен и готовый обезличенный результат.</p>
+        <p class="subtitle">Загрузите документ или вставьте содержимое: backend извлечет текст, сохранит артефакты в private S3, покажет найденные персональные данные, позиции замен и готовый обезличенный результат.</p>
       </div>
       <div class="health" aria-live="polite"><span id="healthDot" class="dot"></span><span id="healthText">Проверка API</span></div>
     </header>
@@ -285,10 +299,10 @@
         </div>
         <div class="panel-body stack">
           <label class="dropzone" id="dropzone">
-            <input id="fileInput" type="file" accept=".txt,.md,.csv,.json,.log,text/*">
+            <input id="fileInput" type="file" accept=".txt,.md,.csv,.json,.log,.pdf,.docx,text/*,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
             <span>
               <strong>Перетащите файл сюда</strong>
-              <span>TXT, Markdown, CSV, JSON, LOG. PDF/DOCX требуют отдельного extractor backend.</span>
+              <span>TXT, Markdown, CSV, JSON, LOG, PDF, DOCX. Лимит backend upload: 64 MB.</span>
             </span>
           </label>
           <textarea id="sourceText" spellcheck="false" placeholder="Или вставьте текст документа сюда..."></textarea>
@@ -302,8 +316,9 @@
           </div>
           <div class="meta">
             <span id="fileMeta">Файл не выбран</span>
-            <span>Контент обрабатывается в браузере и отправляется только в Analyzer/Anonymizer API.</span>
+            <span id="artifactMeta">Raw, anonymized и manifest сохраняются в private bit S3.</span>
           </div>
+          <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
           <div id="status" class="status" aria-live="polite"></div>
         </div>
       </aside>
@@ -363,7 +378,7 @@
   </main>
 
   <script>
-    const MAX_FILE_SIZE = 2 * 1024 * 1024;
+    const MAX_FILE_SIZE = 64 * 1024 * 1024;
     const sourceText = document.getElementById("sourceText");
     const fileInput = document.getElementById("fileInput");
     const dropzone = document.getElementById("dropzone");
@@ -378,12 +393,16 @@
     const replacementCount = document.getElementById("replacementCount");
     const charCount = document.getElementById("charCount");
     const fileMeta = document.getElementById("fileMeta");
+    const artifactMeta = document.getElementById("artifactMeta");
+    const progressBar = document.getElementById("progressBar");
     const copyBtn = document.getElementById("copyBtn");
     const downloadBtn = document.getElementById("downloadBtn");
     const healthDot = document.getElementById("healthDot");
     const healthText = document.getElementById("healthText");
 
     let currentAnonymizedText = "";
+    let currentJobId = "";
+    let selectedFile = null;
 
     function escapeHtml(value) {
       return value.replace(/[&<>"']/g, (char) => ({
@@ -401,7 +420,15 @@
     }
 
     function updateCounts() {
+      if (selectedFile) {
+        charCount.textContent = `${Math.round(selectedFile.size / 1024)} KB`;
+        return;
+      }
       charCount.textContent = `${sourceText.value.length} символов`;
+    }
+
+    function setProgress(value) {
+      progressBar.style.width = `${Math.max(0, Math.min(100, value || 0))}%`;
     }
 
     function normalizeResults(results, textLength) {
@@ -431,40 +458,36 @@
       let cursor = 0;
       const parts = [];
       for (const item of results) {
+        if (item.start >= text.length) continue;
+        const safeEnd = Math.min(item.end, text.length);
         parts.push(escapeHtml(text.slice(cursor, item.start)));
-        const fragment = escapeHtml(text.slice(item.start, item.end));
+        const fragment = escapeHtml(text.slice(item.start, safeEnd));
         parts.push(`<mark class="pii" title="${escapeHtml(item.entity_type)} score ${Number(item.score).toFixed(2)}">${fragment}</mark>`);
-        cursor = item.end;
+        cursor = safeEnd;
       }
       parts.push(escapeHtml(text.slice(cursor)));
       highlighted.className = "document";
       highlighted.innerHTML = parts.join("");
     }
 
-    function renderReplacements(text, analyzerResults, anonymizerItems) {
-      if (!analyzerResults.length) {
+    function renderReplacements(replacements) {
+      if (!replacements.length) {
         replacementRows.innerHTML = '<tr><td colspan="5" class="empty">PII не найдено.</td></tr>';
         return;
       }
-      replacementRows.innerHTML = analyzerResults.map((item, index) => {
-        const replacement = anonymizerItems[index]?.text || `<${item.entity_type}>`;
-        const original = text.slice(item.start, item.end);
+      replacementRows.innerHTML = replacements.map((item) => {
         return `<tr>
           <td><code>${escapeHtml(item.entity_type)}</code></td>
           <td>${Number(item.score || 0).toFixed(2)}</td>
-          <td>${escapeHtml(original)}</td>
-          <td>${escapeHtml(replacement)}</td>
+          <td>${escapeHtml(item.original || "")}</td>
+          <td>${escapeHtml(item.replacement || `<${item.entity_type}>`)}</td>
           <td>${item.start}-${item.end}</td>
         </tr>`;
       }).join("");
     }
 
-    async function postJson(url, payload) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
       if (!response.ok) {
         const body = await response.text();
         throw new Error(`${response.status} ${response.statusText}: ${body.slice(0, 240)}`);
@@ -472,41 +495,74 @@
       return response.json();
     }
 
+    async function submitJob() {
+      const form = new FormData();
+      form.append("language", language.value);
+      if (selectedFile) {
+        form.append("file", selectedFile);
+      } else {
+        form.append("text", sourceText.value);
+      }
+      return fetchJson("/processor/jobs", {
+        method: "POST",
+        body: form
+      });
+    }
+
+    async function pollJob(jobId) {
+      for (;;) {
+        const job = await fetchJson(`/processor/jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        setProgress(job.progress || 0);
+        if (job.status === "queued") setStatus("Документ в очереди processor...");
+        if (job.status === "extracting") setStatus("Извлечение текста из документа...");
+        if (job.status === "processing") setStatus(`Анализ и обезличивание: ${job.characters || 0} символов...`);
+        if (job.status === "failed") throw new Error(job.error || "Processor job failed");
+        if (job.status === "complete") return job;
+        await new Promise((resolve) => setTimeout(resolve, 900));
+      }
+    }
+
+    function renderJob(job) {
+      currentJobId = job.job_id;
+      currentAnonymizedText = job.anonymized_text || "";
+      const analyzerResults = normalizeResults(job.analyzer_results || [], (job.source_text || "").length);
+      renderHighlights(job.source_text || "", analyzerResults);
+      findingCount.textContent = `${job.stats?.entities || analyzerResults.length} находок`;
+      anonymized.className = "document";
+      anonymized.textContent = currentAnonymizedText || "Processor вернул пустой результат.";
+      renderReplacements(job.replacements || []);
+      replacementCount.textContent = `${job.stats?.replacements || 0} замен`;
+      const manifestKey = job.artifacts?.manifest?.key || "";
+      artifactMeta.textContent = manifestKey
+        ? `S3 manifest: s3://${job.artifacts.manifest.bucket}/${manifestKey}`
+        : "Артефакты сохранены backend processor.";
+      if (job.truncated) {
+        setStatus(`Готово. Preview ограничен ${job.preview_chars} символами; полный результат доступен через Скачать.`, "ok");
+      } else {
+        setStatus("Готово: документ проанализирован, обезличен и сохранен в S3.", "ok");
+      }
+      copyBtn.disabled = !currentAnonymizedText;
+      downloadBtn.disabled = !currentJobId;
+    }
+
     async function analyzeDocument() {
       const text = sourceText.value;
-      if (!text.trim()) {
+      if (!selectedFile && !text.trim()) {
         setStatus("Вставьте текст или загрузите файл.", "error");
         return;
       }
       analyzeBtn.disabled = true;
       copyBtn.disabled = true;
       downloadBtn.disabled = true;
-      setStatus("Анализ документа...");
+      setProgress(5);
+      setStatus("Отправка документа в processor...");
       try {
-        const rawResults = await postJson("/analyzer/analyze", {
-          text,
-          language: language.value
-        });
-        const analyzerResults = normalizeResults(rawResults, text.length);
-        renderHighlights(text, analyzerResults);
-        findingCount.textContent = `${analyzerResults.length} находок`;
-
-        setStatus("Применение замен...");
-        const anonymizerResult = await postJson("/anonymizer/anonymize", {
-          text,
-          analyzer_results: analyzerResults
-        });
-        currentAnonymizedText = anonymizerResult.text || "";
-        anonymized.className = "document";
-        anonymized.textContent = currentAnonymizedText || "Anonymizer вернул пустой результат.";
-        const items = anonymizerResult.items || [];
-        renderReplacements(text, analyzerResults, items);
-        replacementCount.textContent = `${items.length || analyzerResults.length} замен`;
-        copyBtn.disabled = !currentAnonymizedText;
-        downloadBtn.disabled = !currentAnonymizedText;
-        setStatus("Готово: документ проанализирован и обезличен.", "ok");
+        const submitted = await submitJob();
+        const job = await pollJob(submitted.job_id);
+        renderJob(job);
       } catch (error) {
         setStatus(`Ошибка: ${error.message}`, "error");
+        setProgress(0);
       } finally {
         analyzeBtn.disabled = false;
       }
@@ -515,8 +571,11 @@
     function resetUi() {
       sourceText.value = "";
       currentAnonymizedText = "";
+      currentJobId = "";
+      selectedFile = null;
       fileInput.value = "";
       fileMeta.textContent = "Файл не выбран";
+      artifactMeta.textContent = "Raw, anonymized и manifest сохраняются в private bit S3.";
       highlighted.className = "document empty";
       highlighted.textContent = "Результаты появятся после анализа.";
       anonymized.className = "document empty";
@@ -526,6 +585,7 @@
       replacementCount.textContent = "0 замен";
       copyBtn.disabled = true;
       downloadBtn.disabled = true;
+      setProgress(0);
       setStatus("");
       updateCounts();
     }
@@ -533,52 +593,49 @@
     async function loadFile(file) {
       if (!file) return;
       const extension = file.name.split(".").pop().toLowerCase();
-      if (["pdf", "doc", "docx", "rtf"].includes(extension)) {
-        setStatus("PDF/DOC/DOCX пока не парсятся в браузере. Нужен extractor backend; загрузите TXT/MD/CSV/JSON или вставьте текст.", "error");
-        return;
-      }
       if (file.size > MAX_FILE_SIZE) {
-        setStatus("Файл больше 2 MB. Для больших документов нужен backend queue/extractor.", "error");
+        setStatus("Файл больше 64 MB. Для таких документов нужен отдельный batch queue.", "error");
         return;
       }
-      if (file.type && !file.type.startsWith("text/") && !["txt", "md", "csv", "json", "log"].includes(extension)) {
-        setStatus("Неподдерживаемый формат. Сейчас принимаются текстовые документы.", "error");
+      if (!["txt", "md", "csv", "json", "log", "pdf", "docx"].includes(extension) && file.type && !file.type.startsWith("text/")) {
+        setStatus("Неподдерживаемый формат. Сейчас принимаются TXT/MD/CSV/JSON/LOG/PDF/DOCX.", "error");
         return;
       }
-      sourceText.value = await file.text();
+      selectedFile = file;
+      sourceText.value = "";
       fileMeta.textContent = `${file.name} · ${Math.round(file.size / 1024)} KB`;
       updateCounts();
-      setStatus("Файл загружен. Запустите анализ.", "ok");
+      setStatus("Файл выбран. Backend извлечет текст после запуска.", "ok");
     }
 
     async function checkHealth() {
       try {
-        const response = await fetch("/health", { cache: "no-store" });
+        const response = await fetch("/processor/health", { cache: "no-store" });
         if (!response.ok) throw new Error(String(response.status));
         healthDot.classList.add("ok");
-        healthText.textContent = "API доступен";
+        healthText.textContent = "Processor доступен";
       } catch {
         healthDot.classList.remove("ok");
-        healthText.textContent = "API недоступен";
+        healthText.textContent = "Processor недоступен";
       }
     }
 
     fileInput.addEventListener("change", () => loadFile(fileInput.files[0]));
-    sourceText.addEventListener("input", updateCounts);
+    sourceText.addEventListener("input", () => {
+      selectedFile = null;
+      fileInput.value = "";
+      fileMeta.textContent = "Файл не выбран";
+      updateCounts();
+    });
     analyzeBtn.addEventListener("click", analyzeDocument);
     clearBtn.addEventListener("click", resetUi);
     copyBtn.addEventListener("click", async () => {
       await navigator.clipboard.writeText(currentAnonymizedText);
-      setStatus("Обезличенный текст скопирован.", "ok");
+      setStatus("Preview обезличенного текста скопирован.", "ok");
     });
     downloadBtn.addEventListener("click", () => {
-      const blob = new Blob([currentAnonymizedText], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "anonymized-document.txt";
-      link.click();
-      URL.revokeObjectURL(url);
+      if (!currentJobId) return;
+      window.location.href = `/processor/jobs/${encodeURIComponent(currentJobId)}/download`;
     });
     ["dragenter", "dragover"].forEach((eventName) => {
       dropzone.addEventListener(eventName, (event) => {
