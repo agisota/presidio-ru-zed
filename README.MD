@@ -25,6 +25,10 @@ target is `data.zed.md`, but the app can also run from the compose files in
 docker compose -f deploy/data-zed-md/docker-compose.yml up -d --build
 ```
 
+The compose file has safe local MinIO defaults. For a persistent shared deployment,
+copy `deploy/data-zed-md/processor.env.example` to `deploy/data-zed-md/processor.env`
+and replace the values outside git.
+
 Open the gateway exposed by your reverse proxy and use `/processor/health` for a smoke check.
 The production deployment uses an additional Traefik overlay:
 

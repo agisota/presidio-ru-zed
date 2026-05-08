@@ -39,6 +39,10 @@ services:
       PRESIDIO_TIMEOUT: "180"
       BIT_S3_ENDPOINT: "http://minio:9000"
       AWS_ENDPOINT_URL_S3: "http://minio:9000"
+      BIT_S3_BUCKET: "${BIT_S3_BUCKET:-agent-artifacts}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-data-zed-local}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-data-zed-local-password}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
       S3_CONNECT_TIMEOUT: "3"
       S3_READ_TIMEOUT: "30"
       S3_MAX_ATTEMPTS: "2"
@@ -58,8 +62,8 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        MINIO_ROOT_USER="$${AWS_ACCESS_KEY_ID}" \
-        MINIO_ROOT_PASSWORD="$${AWS_SECRET_ACCESS_KEY}" \
+        MINIO_ROOT_USER="$${AWS_ACCESS_KEY_ID:-data-zed-local}" \
+        MINIO_ROOT_PASSWORD="$${AWS_SECRET_ACCESS_KEY:-data-zed-local-password}" \
         minio server /data --console-address ":9001"
     volumes:
       - data_zed_minio:/data
@@ -76,7 +80,7 @@ services:
     command:
       - |
         for attempt in $$(seq 1 60); do
-          mc alias set data-zed http://minio:9000 "$${AWS_ACCESS_KEY_ID}" "$${AWS_SECRET_ACCESS_KEY}" && break
+          mc alias set data-zed http://minio:9000 "$${AWS_ACCESS_KEY_ID:-data-zed-local}" "$${AWS_SECRET_ACCESS_KEY:-data-zed-local-password}" && break
           sleep 1
         done
         mc mb --ignore-existing "data-zed/$${BIT_S3_BUCKET:-agent-artifacts}"

@@ -43,6 +43,9 @@ curl -fsS https://data.zed.md/anonymizer/anonymize \
 ## Деплой
 
 Основной compose overlay находится в `deploy/data-zed-md/docker-compose.yml`.
+Для локального запуска есть безопасные MinIO defaults. Для постоянного окружения скопируйте
+`deploy/data-zed-md/processor.env.example` в `deploy/data-zed-md/processor.env` и замените
+значения вне git.
 
 На сервере:
 
