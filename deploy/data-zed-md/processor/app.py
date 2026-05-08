@@ -33,8 +33,16 @@ class FactReplacement(BaseModel):
     replacement: str
 
 
+class EntityReplacement(BaseModel):
+    entity_type: str
+    start: int
+    end: int
+    replacement: str
+
+
 class FactReplacementRequest(BaseModel):
-    replacements: list[FactReplacement]
+    replacements: list[FactReplacement] = []
+    entity_replacements: list[EntityReplacement] = []
 
 
 def _storage():
@@ -207,6 +215,20 @@ def replace_facts(job_id: str, request: FactReplacementRequest) -> dict:
     storage = _storage()
     raw_text = storage.get_text(raw_key)
     replacement_map = {item.id: item.replacement for item in request.replacements}
+    entity_replacement_map = {
+        (item.entity_type, item.start, item.end): item.replacement
+        for item in request.entity_replacements
+        if item.replacement.strip()
+    }
+    pii_replacements = []
+    for item in job.get("replacements", []):
+        updated = dict(item)
+        override = entity_replacement_map.get((updated.get("entity_type"), updated.get("start"), updated.get("end")))
+        if override:
+            updated["replacement"] = override
+            updated["manual_replacement"] = True
+        pii_replacements.append(updated)
+
     claims = []
     for claim in job.get("claims", []):
         updated = dict(claim)
@@ -215,12 +237,13 @@ def replace_facts(job_id: str, request: FactReplacementRequest) -> dict:
             updated["applied"] = bool(replacement_map[updated["id"]].strip())
         claims.append(updated)
 
-    final_text = apply_fact_replacements(raw_text, job.get("replacements", []), claims)
+    final_text = apply_fact_replacements(raw_text, pii_replacements, claims)
     keys = build_storage_keys(job_id, job.get("filename", "document.txt"))
     final_artifact = storage.put_text(keys["final"], final_text)
     job.update(
         {
             "claims": claims,
+            "replacements": pii_replacements,
             "final_text": final_text[:PREVIEW_CHARS],
             "truncated": len(final_text) > PREVIEW_CHARS,
             "_full_final_text": final_text,

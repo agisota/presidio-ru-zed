@@ -91,3 +91,42 @@ def test_fact_replacement_endpoint_persists_final_text(monkeypatch):
     assert updated.json()["final_text"].startswith("Sanitized claim.")
     assert updated.json()["artifacts"]["final"]["key"] in storage.objects
     assert client.get(f"/jobs/{job_id}/download").text.startswith("Sanitized claim.")
+
+
+def test_entity_replacement_endpoint_persists_manual_pii_text(monkeypatch):
+    storage = FakeStorage()
+
+    def fake_processor():
+        return DocumentProcessor(storage=storage, presidio=FakePresidio(), chunk_size=128)
+
+    monkeypatch.setattr(processor_app, "_processor", fake_processor)
+    monkeypatch.setattr(processor_app, "_storage", lambda: storage)
+    processor_app.jobs.clear()
+    client = TestClient(processor_app.app)
+
+    created = client.post(
+        "/jobs",
+        data={"language": "ru", "text": "Паспорт 4510 123456. Revenue grew 47%."},
+    )
+    job_id = created.json()["job_id"]
+    job = client.get(f"/jobs/{job_id}").json()
+    passport = job["replacements"][0]
+
+    updated = client.post(
+        f"/jobs/{job_id}/facts",
+        json={
+            "entity_replacements": [
+                {
+                    "entity_type": passport["entity_type"],
+                    "start": passport["start"],
+                    "end": passport["end"],
+                    "replacement": "<DOCUMENT_ID>",
+                }
+            ]
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["replacements"][0]["replacement"] == "<DOCUMENT_ID>"
+    assert "<DOCUMENT_ID>" in updated.json()["final_text"]
+    assert client.get(f"/jobs/{job_id}/download").text.startswith("Паспорт <DOCUMENT_ID>")

@@ -1,3 +1,55 @@
+# Dataclenear
+
+Russian-first document anonymization workspace built on Microsoft Presidio.
+
+Dataclenear is focused on an operator-friendly flow: upload a document, extract text,
+see the original and anonymized result side by side, inspect every detected PII span,
+override replacements manually, and export a final cleaned text. The current deployment
+target is `data.zed.md`, but the app can also run from the compose files in
+`deploy/data-zed-md`.
+
+## What this fork adds
+
+- Russian UI for document upload, review, replacement navigation, and export.
+- PDF/DOCX/plain-text extraction through a backend processor.
+- Durable job artifacts in S3-compatible storage: raw text, anonymized text, final text,
+  manifest, and job state.
+- Side-by-side synchronized document panes with previous/next navigation over findings.
+- A replacement table where detected PII can be reviewed and manually overridden.
+- A facts/assertions table where business claims can be manually replaced or auto-randomized.
+- Russian Analyzer configuration and recognizers for common Russian identifiers.
+
+## Quick Start
+
+```bash
+docker compose -f deploy/data-zed-md/docker-compose.yml up -d --build
+```
+
+Open the gateway exposed by your reverse proxy and use `/processor/health` for a smoke check.
+The production deployment uses an additional Traefik overlay:
+
+```bash
+docker compose \
+  -f deploy/data-zed-md/docker-compose.yml \
+  -f deploy/data-zed-md/docker-compose.traefik.yml \
+  up -d --build
+```
+
+## Product Roadmap
+
+- PDF page thumbnails with per-page redaction navigation.
+- Entity filters, confidence thresholds, and recognizer-specific controls.
+- Review queue for large files with resumable upload and progress history.
+- Better Russian-specific recognizers for passports, phones, tax IDs, addresses, and names.
+- Export formats beyond text: DOCX, PDF preview, JSON audit bundle, and CSV replacement log.
+- Role-based review mode: analyst proposes replacements, approver finalizes export.
+- Visual design pass with denser operational dashboards, keyboard shortcuts, and better mobile layout.
+
+## Upstream
+
+This repository keeps Microsoft Presidio as the core detection/anonymization engine.
+The upstream project and license are preserved below.
+
 # Presidio - Data Protection and De-identification SDK
 
 **Context aware, pluggable and customizable PII de-identification service for text and images.**
@@ -102,4 +154,3 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 <a href="https://github.com/microsoft/presidio/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=microsoft/presidio" />
 </a>
-
